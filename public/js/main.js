@@ -3,7 +3,7 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('🚀 Iniciando WhatsApp Sender Pro...');
+  console.log('🚀 Iniciando Monchito WA...');
 
   // Wait for Firebase config to load before anything else
   await firebaseConfigReady;

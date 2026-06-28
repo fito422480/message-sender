@@ -2,9 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { upload } = require('./media');
-const qrcode = require('qrcode');
 const { cleanupOldFiles, loadNumbersFromCSV } = require('./utils');
 const { normalizeNumber, getCountryConfigs } = require('./phoneValidator');
+const waha = require('./wahaClient');
 const redisQueue = require('./queueRedis');
 const metricsStore = require('./metricsStore');
 const { publicDir, retentionHours } = require('./config');
@@ -20,8 +20,6 @@ const { requireFeature, requireLimit, getPlanFeatures, canUseProfessionalFeature
 
 // Map para rastrear operaciones de refresh-qr en progreso por usuario
 const qrRefreshInProgress = new Map();
-// Map separado para cooldown de cleanInitialize en /qr (no bloquea /refresh-qr)
-const qrCleanInitCooldown = new Map();
 
 // Middleware condicional para desarrollo
 // Chains: checkJwt -> ensureUserProfile -> checkTrial
@@ -137,18 +135,9 @@ function buildRoutes() {
   router.post('/auth/session', conditionalAuthNoTrial, async (req, res) => {
     try {
       const userId = req.auth.uid;
-      const redis = require('./redisClient').getRedis();
       const crypto = require('crypto');
 
       const token = crypto.randomUUID();
-      const sessionData = JSON.stringify({
-        token,
-        createdAt: new Date().toISOString(),
-        userAgent: req.headers['user-agent'] || 'unknown',
-        ip: req.ip || req.connection.remoteAddress || 'unknown'
-      });
-
-      await redis.set(`ms:session:${userId}`, sessionData, 'EX', 24 * 60 * 60);
       logger.info({ uid: userId }, 'Session created via POST /auth/session');
 
       res.json({ sessionToken: token });
@@ -223,25 +212,14 @@ function buildRoutes() {
   // Estado de la sesión del usuario autenticado
   router.get('/connection-status', conditionalAuth, async (req, res) => {
     try {
-      logger.info('Connection status request', {
-        userId: req.auth?.uid,
-        userName: req.auth?.name || req.auth?.email,
-        userAgent: req.headers['user-agent'],
-        ip: req.ip
-      });
-
       const whatsappManager = await sessionManager.getSessionByToken(req);
       const s = whatsappManager.getState();
-      const health = whatsappManager.getConnectionHealth ? whatsappManager.getConnectionHealth() : {};
 
       const conn = s.connectionState;
       const stateText = s.isReady
         ? 'connected'
-        : (conn === 'phone_taken' ? 'phone_taken'
-          : (health.isInCooldown ? 'cooldown'
-            : (conn === 'qr_ready' ? 'qr_ready'
-              : (health.isConnecting || conn === 'connecting' ? 'connecting'
-                : (conn === 'unauthorized' ? 'unauthorized' : 'disconnected')))));
+        : (conn === 'qr_ready' ? 'qr_ready'
+          : (conn === 'connecting' ? 'connecting' : 'disconnected'));
 
       const resp = {
         status: s.connectionState,
@@ -250,24 +228,11 @@ function buildRoutes() {
         lastActivity: s.lastActivity,
         lastActivityAgo: Math.round((Date.now() - s.lastActivity) / 1000),
         hasQR: !!s.qrCode,
-        connectionState: s.connectionState,
         userId: req.auth?.uid,
         userName: req.auth?.name || req.auth?.email,
-        // Información de rate limiting y conflictos
-        rateLimit: {
-          messageCount: health.messageCount || 0,
-          maxMessagesPerMinute: health.maxMessagesPerMinute || 15,
-          canSendMessages: health.canSendMessages !== false,
-          isInCooldown: health.isInCooldown || false
-        },
-        conflicts: {
-          count: health.conflictCount || 0,
-          lastConflictTime: health.lastConflictTime || null,
-          isInConflictCooldown: health.isInCooldown || false
-        },
         connection: {
-          isConnecting: health.isConnecting || false,
-          lastDisconnectReason: health.lastDisconnectReason || null
+          isConnecting: conn === 'connecting',
+          lastDisconnectReason: null
         }
       };
 
@@ -278,30 +243,13 @@ function buildRoutes() {
         };
       }
 
-      // Task 4.4: Include linked phone from Firestore profile
       if (req.userProfile && req.userProfile.whatsappPhone) {
         resp.whatsappPhone = req.userProfile.whatsappPhone;
       }
 
-      // Include phone_taken alert if present
-      if (s.securityAlert && s.securityAlert.type === 'phone_taken') {
-        resp.phoneTakenError = s.securityAlert.messages[0] || 'Este número ya está asociado a otro usuario';
-      }
-
-      logger.info('Connection status response', {
-        userId: req.auth?.uid,
-        status: resp.status,
-        isReady: resp.isReady,
-        hasQR: resp.hasQR
-      });
-
       res.json(resp);
     } catch (error) {
-      logger.error({
-        err: error?.message,
-        userId: req.auth?.uid,
-        stack: error?.stack
-      }, 'Error en /connection-status');
+      logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en /connection-status');
       res.status(500).json({ error: error.message });
     }
   });
@@ -884,44 +832,55 @@ function buildRoutes() {
   router.get('/campaigns/:id/responses', conditionalAuth, conditionalRole('sender_api'), requireFeature('campaigns'), async (req, res) => {
     try {
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
+      const { db } = require('./firebaseAdmin');
       const chatbotEngine = require('./chatbotEngine');
-      await chatbotEngine.ensureChatbotTables();
 
-      // Get campaign info
-      const campaignResult = await pgClient.query(
-        'SELECT id, created_at FROM campaigns WHERE id = $1 AND user_id = $2',
-        [req.params.id, userId]
-      );
-      if (!campaignResult.rows[0]) {
+      const campaignSnap = await db.collection(`users/${userId}/campaigns`).doc(req.params.id).get();
+      if (!campaignSnap.exists) {
         return res.status(404).json({ error: 'Campaña no encontrada' });
       }
-      const campaign = campaignResult.rows[0];
+      const campaignData = campaignSnap.data();
+      const campaignCreatedAt = campaignData.createdAt;
+      const campaignId = campaignSnap.id;
 
-      // Get phones from campaign recipients
-      const recipientResult = await pgClient.query(
-        'SELECT DISTINCT phone FROM campaign_recipients WHERE campaign_id = $1',
-        [campaign.id]
-      );
-      const phones = recipientResult.rows.map(r => r.phone);
+      const recipientsSnap = await db.collection(`users/${userId}/campaigns/${campaignId}/recipients`).get();
+      const phones = [];
+      recipientsSnap.forEach(d => {
+        const data = d.data();
+        if (data.phone) phones.push(data.phone);
+      });
 
       if (phones.length === 0) {
         return res.json({ responses: [], count: 0 });
       }
 
-      // Get incoming messages from those phones after campaign creation date
-      const messagesResult = await pgClient.query(
-        `SELECT * FROM incoming_messages
-         WHERE user_id = $1 AND contact_phone = ANY($2) AND is_from_contact = true
-           AND created_at >= $3
-         ORDER BY created_at DESC
-         LIMIT 500`,
-        [userId, phones, campaign.created_at]
-      );
+      const messages = [];
+      const fromTime = campaignCreatedAt ? campaignCreatedAt.toDate() : new Date(0);
+
+      // Firestore 'in' max 10 values — batch
+      for (let i = 0; i < phones.length; i += 10) {
+        const batch = phones.slice(i, i + 10);
+        const snap = await db.collection(`users/${userId}/inboxMessages`)
+          .where('contactPhone', 'in', batch)
+          .get();
+        snap.forEach(d => {
+          const data = d.data();
+          if (data.isFromContact !== true) return;
+          const msgCreatedAt = data.createdAt ? data.createdAt.toDate() : new Date(0);
+          if (msgCreatedAt >= fromTime) {
+            messages.push({
+              id: d.id,
+              ...data,
+              createdAt: data.createdAt ? data.createdAt.toMillis() : null,
+            });
+          }
+        });
+      }
+      messages.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
       return res.json({
-        responses: messagesResult.rows,
-        count: messagesResult.rows.length
+        responses: messages,
+        count: messages.length
       });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /campaigns/:id/responses');
@@ -960,37 +919,25 @@ function buildRoutes() {
   });
 
   async function serveQrForUser(userId, res, manager = null) {
-    const qrFileName = `qr-${userId}.png`;
-    const qrPath = path.join(publicDir, qrFileName);
-
-    // Prefer in-memory QR (más fresco)
     const qrManager = manager || sessionManager.sessions?.get?.(userId);
     if (qrManager?.qrCode) {
-      const buf = await qrcode.toBuffer(qrManager.qrCode, {
-        color: { dark: '#128C7E', light: '#FFFFFF' },
-        width: 300,
-        margin: 1,
-      });
+      const base64Data = qrManager.qrCode.replace(/^data:image\/png;base64,/, '');
+      const buf = Buffer.from(base64Data, 'base64');
       res.set('Content-Type', 'image/png');
       return res.send(buf);
     }
 
-    if (fs.existsSync(qrPath)) {
-      return res.sendFile(qrPath);
-    }
-
-    if ((process.env.SESSION_STORE || 'file').toLowerCase() === 'redis') {
-      const { getUserQr } = require('./stores/redisAuthState');
-      const qrText = await getUserQr(userId);
-      if (qrText) {
-        const buf = await qrcode.toBuffer(qrText, {
-          color: { dark: '#128C7E', light: '#FFFFFF' },
-          width: 300,
-          margin: 1,
-        });
-        res.set('Content-Type', 'image/png');
-        return res.send(buf);
-      }
+    // Fallback: try to fetch QR directly from WAHA
+    if (qrManager) {
+      try {
+        const qrBase64 = await qrManager.getQrBase64();
+        if (qrBase64) {
+          const base64Data = qrBase64.replace(/^data:image\/png;base64,/, '');
+          const buf = Buffer.from(base64Data, 'base64');
+          res.set('Content-Type', 'image/png');
+          return res.send(buf);
+        }
+      } catch {}
     }
 
     return null;
@@ -1009,28 +956,15 @@ function buildRoutes() {
         return res.status(400).json({ error: 'Ya estás conectado a WhatsApp' });
       }
 
-      // 1. Si ya hay QR disponible, servirlo inmediatamente (respuesta rápida)
+      // Try to serve existing QR immediately
       const quickServe = await serveQrForUser(userId, res, whatsappManager);
       if (quickServe) return;
 
-      // 2. Si no hay socket, inicializar UNA vez (con cooldown de 60s)
-      if (!whatsappManager.sock) {
-        if (!qrCleanInitCooldown.has(userId)) {
-          qrCleanInitCooldown.set(userId, Date.now());
-          try {
-            await whatsappManager.cleanInitialize();
-          } catch (e) {
-            logger.error({ err: e?.message, userId }, 'Error en cleanInitialize');
-          }
-          setTimeout(() => qrCleanInitCooldown.delete(userId), 60000);
-        } else {
-          await sessionManager.initializeSession(userId);
-        }
-      }
+      // Ensure session is initialized and WAHA is generating QR
+      await sessionManager.initializeSession(userId);
 
-      // 3. Esperar máximo 10s a que Baileys genere el primer QR
-      //    (solo se espera en la primera llamada; las siguientes sirven rápido)
-      for (let i = 0; i < 20; i++) {
+      // Wait up to 15s for WAHA to generate QR
+      for (let i = 0; i < 30; i++) {
         await new Promise(resolve => setTimeout(resolve, 500));
         if (whatsappManager.isReady) {
           return res.status(400).json({ error: 'Ya estás conectado a WhatsApp' });
@@ -1040,8 +974,8 @@ function buildRoutes() {
       }
 
       return res.status(404).json({
-        error: 'QR no disponible para este usuario. Solicita un nuevo QR.',
-        userId: userId
+        error: 'QR no disponible. Solicita un nuevo QR.',
+        userId
       });
     } catch (error) {
       logger.error({ err: error?.message }, 'Error en /qr');
@@ -1065,12 +999,10 @@ function buildRoutes() {
 
       const manager = await sessionManager.getSession(requestedId);
       const served = await serveQrForUser(requestedId, res, manager);
-      if (served) {
-        return;
-      }
+      if (served) return;
 
       return res.status(404).json({
-        error: 'QR no disponible para este usuario. Solicita un nuevo QR.',
+        error: 'QR no disponible. Solicita un nuevo QR.',
         userId: requestedId
       });
     } catch (error) {
@@ -1083,78 +1015,34 @@ function buildRoutes() {
     try {
       const userId = req.auth?.uid;
       if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Usuario no autenticado'
-        });
+        return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
       }
 
-      // Verificar si ya hay una operación de refresh en progreso para este usuario
       if (qrRefreshInProgress.has(userId)) {
-        logger.warn({ userId }, 'Refresh QR ya en progreso para usuario, ignorando solicitud duplicada');
         return res.status(429).json({
           success: false,
-          message: 'Ya hay una operación de refresh en progreso. Por favor espera.',
+          message: 'Ya hay una operación de refresh en progreso',
           retryAfter: 3
         });
       }
 
-      // Marcar como en progreso
       qrRefreshInProgress.set(userId, Date.now());
-
-      // Limpiar el marcador después de 30 segundos como medida de seguridad
-      setTimeout(() => {
-        qrRefreshInProgress.delete(userId);
-      }, 30000);
+      setTimeout(() => qrRefreshInProgress.delete(userId), 30000);
 
       const whatsappManager = await sessionManager.getSessionByToken(req);
 
       if (whatsappManager.isReady) {
-        qrRefreshInProgress.delete(userId); // Limpiar inmediatamente si ya está conectado
-        return res.status(400).json({
-          success: false,
-          message: 'No se puede actualizar el QR si ya estás conectado'
-        });
-      }
-
-      // Activa la compuerta para captura de QR
-      whatsappManager.requestQrCapture();
-
-      // Si ya hay un QR en memoria, lo escribimos para este usuario específico
-      const wrote = await whatsappManager.captureQrToDisk(userId);
-
-      if (wrote) {
-        qrRefreshInProgress.delete(userId); // Limpiar al completar exitosamente
-        return res.json({
-          success: true,
-          message: 'QR actualizado',
-          qrUrl: '/qr'
-        });
-      }
-
-      // Plan B: regenerar QR si no hay uno en memoria
-      const ok = await whatsappManager.refreshQR();
-      if (ok) {
-        qrRefreshInProgress.delete(userId); // Limpiar al completar exitosamente
-        return res.json({
-          success: true,
-          message: 'Solicitando nuevo código QR...',
-          qrUrl: '/qr'
-        });
-      }
-
-      qrRefreshInProgress.delete(userId); // Limpiar si falla
-      return res.status(400).json({
-        success: false,
-        message: 'No se pudo refrescar el QR en este momento'
-      });
-    } catch (e) {
-      // Asegurar limpieza en caso de error
-      const userId = req.auth?.uid;
-      if (userId) {
         qrRefreshInProgress.delete(userId);
+        return res.status(400).json({ success: false, message: 'Ya estás conectado a WhatsApp' });
       }
 
+      // Force clean re-initialize to get a new QR
+      await whatsappManager.cleanInitialize();
+      qrRefreshInProgress.delete(userId);
+      return res.json({ success: true, message: 'Solicitando nuevo código QR...', qrUrl: '/qr' });
+    } catch (e) {
+      const userId = req.auth?.uid;
+      if (userId) qrRefreshInProgress.delete(userId);
       logger.error({ err: e?.message, userId }, 'Error en refresh-qr');
       res.status(500).json({ success: false, message: e.message || 'Error al refrescar QR' });
     }
@@ -1227,8 +1115,7 @@ function buildRoutes() {
       res.json({
         ...state,
         userId: req.auth?.uid,
-        userName: req.auth?.name || req.auth?.email,
-        authPath: whatsappManager.authPath
+        userName: req.auth?.name || req.auth?.email
       });
     } catch (error) {
       logger.error({ err: error?.message }, 'Error en /my-session');
@@ -1236,202 +1123,63 @@ function buildRoutes() {
     }
   });
 
-  // Endpoint para logout robusto de WhatsApp
   router.post('/logout-whatsapp', conditionalAuth, async (req, res) => {
     try {
       const userId = req.auth.uid;
-      // Clear browser session on WhatsApp logout
       await clearSession(userId).catch(() => {});
-      console.log(`🚪 [${userId}] Solicitud de logout robusto de WhatsApp recibida`);
-
-      const manager = await sessionManager.getSession(userId);
-      if (!manager) {
-        console.log(`⚠️ [${userId}] No hay sesión activa para logout`);
-        return res.json({
-          success: true,
-          message: 'No hay sesión activa',
-          state: 'no_session'
-        });
-      }
-
-      // Verificar si el manager tiene el método robustLogout
-      if (typeof manager.robustLogout !== 'function') {
-        console.log(`⚠️ [${userId}] Manager no tiene método robustLogout, usando logout normal`);
-        const result = await manager.logout();
-        return res.json({
-          success: result.success || result,
-          message: result.message || 'Logout de WhatsApp completado',
-          timestamp: new Date().toISOString(),
-          fallback: true
-        });
-      }
-
-      // Usar logout robusto
-      const result = await manager.robustLogout();
-
-      const response = {
-        success: result.success,
-        timestamp: new Date().toISOString(),
-        attempts: result.attempts.length,
-        finalState: result.finalState,
-        details: result
-      };
-
-      if (result.success) {
-        console.log(`✅ [${userId}] Logout robusto de WhatsApp exitoso`);
-        response.message = 'Logout de WhatsApp completado exitosamente';
-        response.recommendation = result.finalState.fullyDisconnected ?
-          'Dispositivo completamente desvinculado' :
-          'Logout completado, puede tardar unos minutos en reflejarse en WhatsApp';
-      } else {
-        console.log(`⚠️ [${userId}] Logout robusto con problemas:`, result);
-        response.message = 'Logout completado con advertencias';
-        response.recommendation = 'Se recomienda verificar manualmente la desvinculación en WhatsApp';
-      }
-
-      res.json(response);
-
+      const result = await sessionManager.logoutByToken(req);
+      return res.json({ success: true, message: 'Sesión de WhatsApp cerrada', ...result });
     } catch (error) {
-      console.error('❌ Error en logout robusto de WhatsApp:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Error interno del servidor',
-        timestamp: new Date().toISOString()
-      });
+      logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en logout-whatsapp');
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 
-  // Endpoint para verificar estado de logout
   router.get('/logout-status/:userId?', conditionalAuth, async (req, res) => {
     try {
       const userId = req.params.userId || req.auth.uid;
-
-      // Verificar autorización si se consulta otro usuario
       if (userId !== req.auth.uid) {
-        return res.status(403).json({ error: 'No autorizado para consultar otro usuario' });
+        return res.status(403).json({ error: 'No autorizado' });
       }
 
       const manager = await sessionManager.getSession(userId);
       if (!manager) {
-        return res.json({
-          userId,
-          connected: false,
-          state: 'no_session',
-          message: 'No hay sesión activa'
-        });
+        return res.json({ userId, connected: false, state: 'no_session' });
       }
-
-      const state = await manager.verifyLogoutState();
 
       res.json({
         userId,
         connected: manager.isReady,
-        state: state.fullyDisconnected ? 'disconnected' : 'partially_connected',
-        details: state,
+        state: manager.isReady ? 'connected' : 'disconnected',
+        connectionState: manager.connectionState,
         timestamp: new Date().toISOString()
       });
-
     } catch (error) {
-      console.error('❌ Error verificando estado de logout:', error);
-      res.status(500).json({
-        error: 'Error interno del servidor',
-        timestamp: new Date().toISOString()
-      });
+      logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en logout-status');
+      res.status(500).json({ error: 'Error interno del servidor' });
     }
   });
 
-  // Endpoint temporal para resetear cooldown (útil para debugging)
-  router.post('/reset-cooldown', checkJwt, async (req, res) => {
-    try {
-      const userId = req.auth?.uid;
-      console.log(`🔄 [${userId}] Solicitud de reset de cooldown recibida`);
-
-      const manager = await sessionManager.getSession(userId);
-      if (!manager) {
-        return res.json({
-          success: false,
-          message: 'No hay sesión activa'
-        });
-      }
-
-      // Resetear cooldown
-      if (typeof manager.resetCooldown === 'function') {
-        manager.resetCooldown();
-        console.log(`✅ [${userId}] Cooldown reseteado exitosamente`);
-
-        res.json({
-          success: true,
-          message: 'Cooldown reseteado exitosamente',
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        res.json({
-          success: false,
-          message: 'Manager no tiene método resetCooldown',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-    } catch (error) {
-      console.error('❌ Error reseteando cooldown:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Error interno del servidor',
-        timestamp: new Date().toISOString()
-      });
-    }
+  // Reset cooldown (no-op with WAHA — no built-in rate limiting)
+  router.post('/reset-cooldown', checkJwt, async (_req, res) => {
+    res.json({ success: true, message: 'Cooldown reseteado' });
   });
 
-  // Endpoint para limpiar sesión de Redis (resolver conflictos)
+  // Clear Redis auth state (no-op with WAHA — auth lives in WAHA server)
   router.post('/auth/clear-redis', conditionalAuth, async (req, res) => {
-    try {
-      const whatsappManager = await sessionManager.getSessionByToken(req);
-
-      logger.info({ userId: req.auth?.uid }, 'Solicitud de limpieza de Redis recibida');
-
-      // Llamar al método de limpieza
-      const cleared = await whatsappManager._clearRedisAuth();
-
-      if (cleared) {
-        logger.info({ userId: req.auth?.uid }, 'Redis limpiado exitosamente');
-        res.json({
-          success: true,
-          message: 'Sesión de Redis limpiada exitosamente. Puede reintentar la conexión.',
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        logger.warn({ userId: req.auth?.uid }, 'No se encontraron claves para limpiar');
-        res.json({
-          success: true,
-          message: 'No se encontraron datos antiguos en Redis',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-    } catch (error) {
-      logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error limpiando Redis');
-      res.status(500).json({
-        success: false,
-        error: 'Error limpiando sesión de Redis',
-        details: error?.message,
-        timestamp: new Date().toISOString()
-      });
-    }
+    res.json({ success: true, message: 'No es necesario limpiar caché con WAHA' });
   });
 
-  // Limpiar caché de métricas y contactos del usuario en Redis
+  // Limpiar caché de usuario (no-op con WAHA)
   router.delete('/cache/user', conditionalAuth, conditionalRole('sender_api'), async (req, res) => {
     try {
       const userId = req.auth?.uid;
       logger.info({ userId }, 'Solicitud de limpieza de caché de usuario');
 
-      const result = await metricsStore.clearUserCache(userId);
-
-      logger.info({ userId, deletedKeys: result.deletedKeys }, 'Caché de usuario limpiado');
       res.json({
         success: true,
-        message: `Caché limpiado: ${result.deletedKeys} claves eliminadas`,
-        deletedKeys: result.deletedKeys,
+        message: 'Caché limpiado',
+        deletedKeys: 0,
         timestamp: new Date().toISOString()
       });
 
@@ -1519,9 +1267,8 @@ function buildRoutes() {
       }
 
       try {
-        const pg = require('./postgresClient');
-        const countResult = await pg.query('SELECT COUNT(*)::int AS cnt FROM templates WHERE user_id = $1', [userId]);
-        usage.templatesTotal = countResult.rows[0]?.cnt || 0;
+        const ft = require('./firestoreTemplates');
+        usage.templatesTotal = await ft.getTemplateCount(userId);
       } catch (e) {
         logger.warn({ err: e.message, userId }, 'Could not fetch template count for plan-features');
       }
@@ -1545,8 +1292,7 @@ function buildRoutes() {
       const apiKey = crypto.randomUUID();
 
       if (db) {
-        const userRef = db.collection('users').doc(uid);
-        await userRef.update({ apiKey });
+        await db.collection('users').doc(uid).set({ apiKey }, { merge: true });
         invalidateProfileCache(uid);
       }
 
@@ -1564,8 +1310,7 @@ function buildRoutes() {
       if (!uid) return res.status(401).json({ error: 'Unauthenticated' });
 
       if (db) {
-        const userRef = db.collection('users').doc(uid);
-        await userRef.update({ apiKey: null });
+        await db.collection('users').doc(uid).set({ apiKey: null }, { merge: true });
         invalidateProfileCache(uid);
       }
 
@@ -1624,8 +1369,7 @@ function buildRoutes() {
       const upperCountry = country.toUpperCase();
 
       if (db) {
-        const userRef = db.collection('users').doc(uid);
-        await userRef.update({ country: upperCountry });
+        await db.collection('users').doc(uid).set({ country: upperCountry }, { merge: true });
         invalidateProfileCache(uid);
       }
 
@@ -1712,16 +1456,9 @@ function buildRoutes() {
       invalidateProfileCache(userId);
 
       // Disconnect WhatsApp session if active
-      const manager = sessionManager.sessions.get(userId);
-      if (manager && manager.isReady) {
-        try {
-          await manager.logout();
-          sessionManager.sessions.delete(userId);
-          logger.info({ adminUid: req.auth.uid, targetUserId: userId }, 'Admin disconnected user WhatsApp session');
-        } catch (logoutErr) {
-          logger.warn({ adminUid: req.auth.uid, targetUserId: userId, err: logoutErr?.message }, 'Error disconnecting user session during phone unlink');
-        }
-      }
+      await sessionManager.logoutUser(userId).catch((logoutErr) => {
+        logger.warn({ adminUid: req.auth.uid, targetUserId: userId, err: logoutErr?.message }, 'Error disconnecting user session during phone unlink');
+      });
 
       logger.info({ adminUid: req.auth.uid, targetUserId: userId, previousPhone }, 'Admin unlinked WhatsApp phone');
 
@@ -1928,29 +1665,11 @@ function buildRoutes() {
       await userRef.update(updateData);
       invalidateProfileCache(userId);
 
-      // If suspending/disabling, clear their active session from Redis
+      // If suspending/disabling, close their active session
       if (status !== 'active') {
-        try {
-          const manager = sessionManager.sessions.get(userId);
-          if (manager && manager.isReady) {
-            await manager.logout();
-            sessionManager.sessions.delete(userId);
-            logger.info({ adminUid: req.auth.uid, targetUserId: userId }, 'Admin disconnected user WhatsApp session (status change)');
-          }
-        } catch (sessionErr) {
+        await sessionManager.logoutUser(userId).catch((sessionErr) => {
           logger.warn({ adminUid: req.auth.uid, targetUserId: userId, err: sessionErr?.message }, 'Error disconnecting session during status change');
-        }
-
-        // Clear session guard token
-        try {
-          const { getRedis } = require('./redisClient');
-          const redis = getRedis();
-          if (redis && redis.status === 'ready') {
-            await redis.del(`session:${userId}`);
-          }
-        } catch (redisErr) {
-          logger.warn({ targetUserId: userId, err: redisErr?.message }, 'Error clearing Redis session during status change');
-        }
+        });
       }
 
       logger.info({ adminUid: req.auth.uid, targetUserId: userId, status, reason }, 'Admin changed user status');
@@ -2053,15 +1772,9 @@ function buildRoutes() {
       const userData = snap.data();
 
       // Disconnect WhatsApp session if active
-      try {
-        const manager = sessionManager.sessions.get(userId);
-        if (manager && manager.isReady) {
-          await manager.logout();
-          sessionManager.sessions.delete(userId);
-        }
-      } catch (sessionErr) {
+      await sessionManager.logoutUser(userId).catch((sessionErr) => {
         logger.warn({ targetUserId: userId, err: sessionErr?.message }, 'Error disconnecting session during user deletion');
-      }
+      });
 
       // Clean up Redis data
       try {
@@ -2106,48 +1819,15 @@ function buildRoutes() {
   // ══════════════════════════════════════════════════════
 
   // Auto-create templates table if it doesn't exist
-  const ensureTemplatesTable = (() => {
-    let created = false;
-    return async () => {
-      if (created) return;
-      const pg = require('./postgresClient');
-      await pg.query(`
-        CREATE TABLE IF NOT EXISTS templates (
-          id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-          user_id VARCHAR(255) NOT NULL,
-          name VARCHAR(255) NOT NULL,
-          content TEXT NOT NULL,
-          category VARCHAR(100),
-          variables TEXT[],
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id);
-      `);
-      created = true;
-    };
-  })();
+  const ft = require('./firestoreTemplates');
 
   // GET /templates — list all templates for the current user
   router.get('/templates', conditionalAuth, conditionalRole('sender_api'), async (req, res) => {
     try {
-      await ensureTemplatesTable();
       const userId = req.auth?.uid || 'default';
       const { category } = req.query || {};
-      const pg = require('./postgresClient');
-
-      let sql = 'SELECT * FROM templates WHERE user_id = $1';
-      const params = [userId];
-
-      if (category) {
-        sql += ' AND category = $2';
-        params.push(category);
-      }
-
-      sql += ' ORDER BY updated_at DESC';
-
-      const result = await pg.query(sql, params);
-      return res.json({ templates: result.rows });
+      const templates = await ft.listTemplates(userId, category);
+      return res.json({ templates });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /templates');
       return res.status(500).json({ error: error.message });
@@ -2157,15 +1837,11 @@ function buildRoutes() {
   // POST /templates — create a new template
   router.post('/templates', conditionalAuth, conditionalRole('sender_api'), requireLimit('templates'), async (req, res) => {
     try {
-      await ensureTemplatesTable();
       const userId = req.auth?.uid || 'default';
 
-      // Check templates limit
       if (req.planLimit && req.planLimit !== -1) {
         try {
-          const pg = require('./postgresClient');
-          const countResult = await pg.query('SELECT COUNT(*)::int AS cnt FROM templates WHERE user_id = $1', [userId]);
-          const totalTemplates = countResult.rows[0]?.cnt || 0;
+          const totalTemplates = await ft.getTemplateCount(userId);
           if (totalTemplates >= req.planLimit) {
             return res.status(403).json({
               error: 'plan_limit_reached',
@@ -2186,15 +1862,8 @@ function buildRoutes() {
         return res.status(400).json({ error: 'Nombre y contenido son requeridos' });
       }
 
-      const pg = require('./postgresClient');
-      const result = await pg.query(
-        `INSERT INTO templates (user_id, name, content, category, variables)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [userId, name.trim(), content.trim(), category?.trim() || null, variables || null]
-      );
-
-      return res.json({ success: true, template: result.rows[0] });
+      const template = await ft.createTemplate(userId, name.trim(), content.trim(), category?.trim() || null, variables || null);
+      return res.json({ success: true, template });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en POST /templates');
       return res.status(500).json({ error: error.message });
@@ -2204,7 +1873,6 @@ function buildRoutes() {
   // PUT /templates/:id — update a template
   router.put('/templates/:id', conditionalAuth, conditionalRole('sender_api'), async (req, res) => {
     try {
-      await ensureTemplatesTable();
       const userId = req.auth?.uid || 'default';
       const { id } = req.params;
       const { name, content, category, variables } = req.body || {};
@@ -2213,19 +1881,12 @@ function buildRoutes() {
         return res.status(400).json({ error: 'Nombre y contenido son requeridos' });
       }
 
-      const pg = require('./postgresClient');
-      const result = await pg.query(
-        `UPDATE templates SET name = $1, content = $2, category = $3, variables = $4, updated_at = NOW()
-         WHERE id = $5 AND user_id = $6
-         RETURNING *`,
-        [name.trim(), content.trim(), category?.trim() || null, variables || null, id, userId]
-      );
-
-      if (result.rows.length === 0) {
+      const template = await ft.updateTemplate(userId, id, name.trim(), content.trim(), category?.trim() || null, variables || null);
+      if (!template) {
         return res.status(404).json({ error: 'Plantilla no encontrada' });
       }
 
-      return res.json({ success: true, template: result.rows[0] });
+      return res.json({ success: true, template });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en PUT /templates/:id');
       return res.status(500).json({ error: error.message });
@@ -2235,17 +1896,11 @@ function buildRoutes() {
   // DELETE /templates/:id — delete a template
   router.delete('/templates/:id', conditionalAuth, conditionalRole('sender_api'), async (req, res) => {
     try {
-      await ensureTemplatesTable();
       const userId = req.auth?.uid || 'default';
       const { id } = req.params;
 
-      const pg = require('./postgresClient');
-      const result = await pg.query(
-        'DELETE FROM templates WHERE id = $1 AND user_id = $2 RETURNING id',
-        [id, userId]
-      );
-
-      if (result.rows.length === 0) {
+      const deleted = await ft.deleteTemplate(userId, id);
+      if (!deleted) {
         return res.status(404).json({ error: 'Plantilla no encontrada' });
       }
 
@@ -2261,28 +1916,13 @@ function buildRoutes() {
   // ══════════════════════════════════════════════════════
 
   const chatbotEngine = require('./chatbotEngine');
+  const fc = require('./firestoreChatbot');
 
   // GET /chatbot/config — get user's chatbot config
   router.get('/chatbot/config', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
-
-      const result = await pgClient.query(
-        'SELECT * FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-
-      if (result.rows.length === 0) {
-        return res.json({ config: null });
-      }
-
-      // Strip encrypted key from response
-      const config = { ...result.rows[0] };
-      config.ai_api_key_set = !!config.ai_api_key_encrypted;
-      delete config.ai_api_key_encrypted;
-
+      const config = await fc.getConfig(userId);
       return res.json({ config });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /chatbot/config');
@@ -2293,16 +1933,10 @@ function buildRoutes() {
   // POST /chatbot/config — create initial config
   router.post('/chatbot/config', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
 
-      // Check if config already exists
-      const existing = await pgClient.query(
-        'SELECT id FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-      if (existing.rows.length > 0) {
+      const existing = await fc.getConfig(userId);
+      if (existing) {
         return res.status(409).json({ error: 'Config already exists. Use PUT to update.' });
       }
 
@@ -2315,40 +1949,14 @@ function buildRoutes() {
 
       const encryptedKey = ai_api_key ? chatbotEngine.encrypt(ai_api_key) : null;
 
-      const result = await pgClient.query(
-        `INSERT INTO chatbot_configs
-         (user_id, name, enabled, active_hours_start, active_hours_end, active_days,
-          cooldown_minutes, only_known_contacts, max_responses_per_contact,
-          ai_enabled, ai_provider, ai_api_key_encrypted, ai_model, ai_system_prompt,
-          welcome_message, fallback_message, bot_mode)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-         RETURNING *`,
-        [
-          userId,
-          name || 'Mi Bot',
-          enabled || false,
-          active_hours_start || '08:00',
-          active_hours_end || '22:00',
-          active_days || [1,2,3,4,5],
-          cooldown_minutes || 30,
-          only_known_contacts !== undefined ? only_known_contacts : true,
-          max_responses_per_contact || 5,
-          ai_enabled || false,
-          ai_provider || null,
-          encryptedKey,
-          ai_model || null,
-          ai_system_prompt || null,
-          welcome_message || null,
-          fallback_message || 'No entendí tu mensaje. Escribí "menu" para ver las opciones.',
-          bot_mode || 'flow',
-        ]
-      );
+      const config = await fc.createConfig(userId, {
+        name, enabled, active_hours_start, active_hours_end, active_days,
+        cooldown_minutes, only_known_contacts, max_responses_per_contact,
+        ai_enabled, ai_provider, ai_api_key_encrypted: encryptedKey, ai_model, ai_system_prompt,
+        welcome_message, fallback_message, bot_mode
+      });
 
       chatbotEngine.invalidateConfigCache(userId);
-      const config = { ...result.rows[0] };
-      config.ai_api_key_set = !!config.ai_api_key_encrypted;
-      delete config.ai_api_key_encrypted;
-
       return res.json({ success: true, config });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en POST /chatbot/config');
@@ -2359,79 +1967,21 @@ function buildRoutes() {
   // PUT /chatbot/config — update config
   router.put('/chatbot/config', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
 
-      const {
-        name, enabled, active_hours_start, active_hours_end, active_days,
-        cooldown_minutes, only_known_contacts, max_responses_per_contact,
-        ai_enabled, ai_provider, ai_api_key, ai_model, ai_system_prompt,
-        welcome_message, fallback_message, exit_message, deactivation_message,
-        start_node_id, activation_keywords, deactivation_keywords, bot_mode
-      } = req.body || {};
-
-      // Build dynamic SET clause
-      const sets = [];
-      const params = [];
-      let idx = 1;
-
-      function addField(col, val) {
-        if (val !== undefined) {
-          sets.push(`${col} = $${idx}`);
-          params.push(val);
-          idx++;
-        }
-      }
-
-      addField('name', name);
-      addField('enabled', enabled);
-      addField('active_hours_start', active_hours_start);
-      addField('active_hours_end', active_hours_end);
-      addField('active_days', active_days);
-      addField('cooldown_minutes', cooldown_minutes);
-      addField('only_known_contacts', only_known_contacts);
-      addField('max_responses_per_contact', max_responses_per_contact);
-      addField('ai_enabled', ai_enabled);
-      addField('ai_provider', ai_provider);
-      addField('ai_model', ai_model);
-      addField('ai_system_prompt', ai_system_prompt);
-      addField('welcome_message', welcome_message);
-      addField('fallback_message', fallback_message);
-      addField('exit_message', exit_message);
-      addField('deactivation_message', deactivation_message);
-      addField('start_node_id', start_node_id);
-      addField('activation_keywords', activation_keywords);
-      addField('deactivation_keywords', deactivation_keywords);
-      addField('bot_mode', bot_mode);
+      const fields = { ...req.body };
 
       // Handle API key specially (encrypt)
-      if (ai_api_key !== undefined) {
-        const encrypted = ai_api_key ? chatbotEngine.encrypt(ai_api_key) : null;
-        sets.push(`ai_api_key_encrypted = $${idx}`);
-        params.push(encrypted);
-        idx++;
+      if (fields.ai_api_key !== undefined) {
+        fields.ai_api_key = fields.ai_api_key ? chatbotEngine.encrypt(fields.ai_api_key) : null;
       }
 
-      if (sets.length === 0) {
-        return res.status(400).json({ error: 'No fields to update' });
-      }
-
-      params.push(userId);
-      const result = await pgClient.query(
-        `UPDATE chatbot_configs SET ${sets.join(', ')} WHERE user_id = $${idx} RETURNING *`,
-        params
-      );
-
-      if (result.rows.length === 0) {
+      const config = await fc.updateConfig(userId, fields);
+      if (!config) {
         return res.status(404).json({ error: 'Config not found. Use POST to create.' });
       }
 
       chatbotEngine.invalidateConfigCache(userId);
-      const config = { ...result.rows[0] };
-      config.ai_api_key_set = !!config.ai_api_key_encrypted;
-      delete config.ai_api_key_encrypted;
-
       return res.json({ success: true, config });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en PUT /chatbot/config');
@@ -2444,25 +1994,9 @@ function buildRoutes() {
   // GET /chatbot/nodes — get all nodes for user's chatbot
   router.get('/chatbot/nodes', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
-
-      const configResult = await pgClient.query(
-        'SELECT id FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-      if (configResult.rows.length === 0) {
-        return res.json({ nodes: [] });
-      }
-
-      const configId = configResult.rows[0].id;
-      const result = await pgClient.query(
-        'SELECT * FROM chatbot_nodes WHERE config_id = $1 ORDER BY created_at',
-        [configId]
-      );
-
-      return res.json({ nodes: result.rows, config_id: configId });
+      const { nodes, configId } = await fc.getNodes(userId);
+      return res.json({ nodes, config_id: configId });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /chatbot/nodes');
       return res.status(500).json({ error: error.message });
@@ -2472,50 +2006,16 @@ function buildRoutes() {
   // POST /chatbot/nodes — create/update nodes (batch — send entire flow)
   router.post('/chatbot/nodes', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
 
-      const configResult = await pgClient.query(
-        'SELECT id FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-      if (configResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Chatbot config not found. Create config first.' });
-      }
-
-      const configId = configResult.rows[0].id;
       const { nodes } = req.body || {};
-
       if (!Array.isArray(nodes)) {
         return res.status(400).json({ error: 'nodes must be an array' });
       }
 
-      // Use transaction: delete old nodes, insert new ones
-      const result = await pgClient.transaction(async (client) => {
-        await client.query('DELETE FROM chatbot_nodes WHERE config_id = $1', [configId]);
+      const result = await fc.replaceNodes(userId, nodes);
 
-        const inserted = [];
-        for (const node of nodes) {
-          const r = await client.query(
-            `INSERT INTO chatbot_nodes (config_id, node_id, type, content, position_x, position_y)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING *`,
-            [
-              configId,
-              node.node_id,
-              node.type,
-              JSON.stringify(node.content || {}),
-              node.position_x || 0,
-              node.position_y || 0,
-            ]
-          );
-          inserted.push(r.rows[0]);
-        }
-        return inserted;
-      });
-
-      chatbotEngine.invalidateNodesCache(configId);
+      chatbotEngine.invalidateNodesCache(userId);
       return res.json({ success: true, nodes: result });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en POST /chatbot/nodes');
@@ -2526,30 +2026,15 @@ function buildRoutes() {
   // DELETE /chatbot/nodes/:nodeId — delete a single node
   router.delete('/chatbot/nodes/:nodeId', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
       const { nodeId } = req.params;
 
-      const configResult = await pgClient.query(
-        'SELECT id FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-        [userId]
-      );
-      if (configResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Chatbot config not found' });
-      }
-
-      const configId = configResult.rows[0].id;
-      const result = await pgClient.query(
-        'DELETE FROM chatbot_nodes WHERE id = $1 AND config_id = $2 RETURNING id',
-        [nodeId, configId]
-      );
-
-      if (result.rows.length === 0) {
+      const deleted = await fc.deleteNode(userId, nodeId);
+      if (!deleted) {
         return res.status(404).json({ error: 'Node not found' });
       }
 
-      chatbotEngine.invalidateNodesCache(configId);
+      chatbotEngine.invalidateNodesCache(userId);
       return res.json({ success: true });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en DELETE /chatbot/nodes/:nodeId');
@@ -2562,19 +2047,9 @@ function buildRoutes() {
   // GET /chatbot/conversations — list active conversations
   router.get('/chatbot/conversations', conditionalAuth, conditionalRole('sender_api'), requireFeature('chatbot'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
-
-      const result = await pgClient.query(
-        `SELECT * FROM chatbot_conversations
-         WHERE user_id = $1
-         ORDER BY updated_at DESC
-         LIMIT 100`,
-        [userId]
-      );
-
-      return res.json({ conversations: result.rows });
+      const conversations = await fc.listConversations(userId);
+      return res.json({ conversations });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /chatbot/conversations');
       return res.status(500).json({ error: error.message });
@@ -2618,45 +2093,15 @@ function buildRoutes() {
   // GET /messages/inbox — paginated conversations grouped by contact
   router.get('/messages/inbox', conditionalAuth, conditionalRole('sender_api'), requireFeature('inbox'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
       const page = Math.max(1, parseInt(req.query.page) || 1);
       const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
-      const offset = (page - 1) * limit;
 
-      const result = await pgClient.query(
-        `SELECT
-           im.contact_phone,
-           COALESCE(c.nombre, MAX(im.contact_name)) AS contact_name,
-           c.sustantivo AS tratamiento,
-           c.grupo,
-           MAX(im.created_at) AS last_message_at,
-           COUNT(*) AS message_count,
-           COUNT(*) FILTER (WHERE im.read = false AND im.is_from_contact = true) AS unread_count,
-           (array_agg(im.message_text ORDER BY im.created_at DESC))[1] AS last_message
-         FROM incoming_messages im
-         LEFT JOIN contacts c ON c.user_id = im.user_id AND c.phone = im.contact_phone
-         WHERE im.user_id = $1
-         GROUP BY im.contact_phone, c.nombre, c.sustantivo, c.grupo
-         ORDER BY MAX(im.created_at) DESC
-         LIMIT $2 OFFSET $3`,
-        [userId, limit, offset]
-      );
-
-      const countResult = await pgClient.query(
-        `SELECT COUNT(DISTINCT contact_phone) AS total
-         FROM incoming_messages WHERE user_id = $1`,
-        [userId]
-      );
+      const { conversations, total } = await fc.getInboxConversations(userId, page, limit);
 
       return res.json({
-        conversations: result.rows,
-        pagination: {
-          page,
-          limit,
-          total: parseInt(countResult.rows[0]?.total || 0),
-        },
+        conversations,
+        pagination: { page, limit, total },
       });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /messages/inbox');
@@ -2667,22 +2112,9 @@ function buildRoutes() {
   // GET /messages/inbox/unread — count of unread conversations
   router.get('/messages/inbox/unread', conditionalAuth, conditionalRole('sender_api'), requireFeature('inbox'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
-
-      const result = await pgClient.query(
-        `SELECT COUNT(DISTINCT contact_phone) AS unread_conversations,
-                COUNT(*) AS unread_messages
-         FROM incoming_messages
-         WHERE user_id = $1 AND read = false AND is_from_contact = true`,
-        [userId]
-      );
-
-      return res.json({
-        unread_conversations: parseInt(result.rows[0]?.unread_conversations || 0),
-        unread_messages: parseInt(result.rows[0]?.unread_messages || 0),
-      });
+      const result = await fc.getInboxUnreadCount(userId);
+      return res.json(result);
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /messages/inbox/unread');
       return res.status(500).json({ error: error.message });
@@ -2692,30 +2124,13 @@ function buildRoutes() {
   // GET /messages/inbox/:phone — messages with a specific contact
   router.get('/messages/inbox/:phone', conditionalAuth, conditionalRole('sender_api'), requireFeature('inbox'), async (req, res) => {
     try {
-      await chatbotEngine.ensureChatbotTables();
       const userId = req.auth?.uid || 'default';
-      const pgClient = require('./postgresClient');
       const { phone } = req.params;
       const page = Math.max(1, parseInt(req.query.page) || 1);
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
-      const offset = (page - 1) * limit;
 
-      // Mark messages as read
-      await pgClient.query(
-        `UPDATE incoming_messages SET read = true
-         WHERE user_id = $1 AND contact_phone = $2 AND read = false AND is_from_contact = true`,
-        [userId, phone]
-      );
-
-      const result = await pgClient.query(
-        `SELECT * FROM incoming_messages
-         WHERE user_id = $1 AND contact_phone = $2
-         ORDER BY created_at DESC
-         LIMIT $3 OFFSET $4`,
-        [userId, phone, limit, offset]
-      );
-
-      return res.json({ messages: result.rows });
+      const messages = await fc.getInboxMessages(userId, phone, page, limit);
+      return res.json({ messages });
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en GET /messages/inbox/:phone');
       return res.status(500).json({ error: error.message });
@@ -2736,13 +2151,13 @@ function buildRoutes() {
 
       // Get WhatsApp session
       const manager = await sessionManager.getSession(userId);
-      if (!manager || !manager.isReady || !manager.sock) {
+      if (!manager || !manager.isReady) {
         return res.status(503).json({ error: 'WhatsApp not connected' });
       }
 
-      // Send via WhatsApp
-      const jid = `${phone}@s.whatsapp.net`;
-      await manager.sock.sendMessage(jid, { text: message.trim() });
+      // Send via WAHA API
+      const chatId = waha.toChatId(phone);
+      await waha.sendText(chatId, message.trim());
 
       // Record as human intervention (deactivates bot for 30min for this contact)
       await chatbotEngine.recordOutgoingMessage(userId, phone, message.trim());
@@ -2800,24 +2215,9 @@ function buildRoutes() {
       const phone = req.params.phone;
       if (!phone) return res.status(400).json({ error: 'Phone required' });
 
-      const chatbotEngine = require('./chatbotEngine');
-      await chatbotEngine.ensureChatbotTables();
-
-      // Delete messages
-      const pg = require('./postgresClient');
-      const msgResult = await pg.query(
-        'DELETE FROM incoming_messages WHERE user_id = $1 AND contact_phone = $2',
-        [userId, phone]
-      );
-
-      // Delete conversation state
-      await pg.query(
-        'DELETE FROM chatbot_conversations WHERE user_id = $1 AND contact_phone = $2',
-        [userId, phone]
-      );
-
-      logger.info({ userId, phone, deletedMessages: msgResult.rowCount }, 'Inbox chat deleted');
-      return res.json({ success: true, deletedMessages: msgResult.rowCount });
+      const result = await fc.deleteMessagesAndConversation(userId, phone);
+      logger.info({ userId, phone, deletedMessages: result.deletedMessages }, 'Inbox chat deleted');
+      return res.json(result);
     } catch (error) {
       logger.error({ err: error?.message, userId: req.auth?.uid }, 'Error en DELETE /messages/inbox/:phone');
       return res.status(500).json({ error: error.message });

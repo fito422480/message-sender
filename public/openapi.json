@@ -1,11 +1,11 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "WhatsApp Sender Pro API",
+    "title": "Monchito WA API",
     "description": "API publica para enviar mensajes de WhatsApp, gestionar campanas y recibir webhooks de estado. Disponible para planes Profesional, Premium y Enterprise.\n\n## Autenticacion\nTodas las llamadas requieren un Bearer token obtenido desde `POST /api/v1/auth/token` usando tu API Key.\n\n## Rate Limiting\nWhatsApp impone un limite de **15 mensajes por minuto** por linea conectada. Las solicitudes que excedan este limite seran encoladas automaticamente.\n\n## Errores\nTodos los errores siguen un formato consistente con `error` y opcionalmente `details`.",
     "version": "1.0.0",
     "contact": {
-      "name": "WhatsApp Sender Pro",
+      "name": "Monchito WA",
       "url": "https://mindtechpy.net",
       "email": "andyvercha@gmail.com"
     }

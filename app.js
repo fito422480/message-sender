@@ -21,7 +21,6 @@ const { cleanupOldFiles } = require('./src/utils');
 const { buildRoutes } = require('./src/routes');
 const { buildApiV1Routes } = require('./src/apiV1Routes');
 const sessionManager = require('./src/sessionManager');
-const { getRedis } = require('./src/redisClient');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -60,16 +59,6 @@ app.get('/health', async (_req, res) => {
 
 app.get('/ready', async (_req, res) => {
   try {
-    const store = (process.env.SESSION_STORE || 'file').toLowerCase();
-    if (store === 'redis') {
-      const redis = getRedis();
-      const status = redis?.status;
-      // Consideramos ok mientras el cliente esté en estados transitorios comunes
-      const acceptable = new Set(['ready', 'connecting', 'reconnecting', 'wait']);
-      if (!acceptable.has(String(status))) {
-        return res.status(503).json({ ready: false, store, redisStatus: status });
-      }
-    }
     res.json({ ready: true });
   } catch (e) {
     res.status(503).json({ ready: false, error: e?.message });
@@ -130,13 +119,13 @@ async function shutdown(signal) {
     server.close(() => logger.info('Servidor HTTP cerrado'));
   }
 
-  // 2. Close BullMQ worker (waits for active job to finish)
+  // 2. Close queue worker (waits for active job to finish)
   try {
     const { closeWorker } = require('./src/queueRedis');
     if (closeWorker) await closeWorker();
-    logger.info('Worker BullMQ cerrado');
+    logger.info('Queue worker cerrado');
   } catch (e) {
-    logger.error({ err: e?.message }, 'Error cerrando worker BullMQ');
+    logger.error({ err: e?.message }, 'Error cerrando worker');
   }
 
   // 3. Close PostgreSQL pool
@@ -146,16 +135,6 @@ async function shutdown(signal) {
     logger.info('Pool PostgreSQL cerrado');
   } catch (e) {
     logger.error({ err: e?.message }, 'Error cerrando pool PostgreSQL');
-  }
-
-  // 4. Close Redis
-  try {
-    const { getRedis } = require('./src/redisClient');
-    const redis = getRedis();
-    if (redis && redis.status !== 'end') await redis.quit();
-    logger.info('Redis cerrado');
-  } catch (e) {
-    logger.error({ err: e?.message }, 'Error cerrando Redis');
   }
 
   logger.info('Shutdown completo');

@@ -2,7 +2,6 @@
 require('dotenv').config();
 const logger = require('./logger');
 const { auth } = require('./firebaseAdmin');
-const { getAuthState } = require('./auth/index');
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Helpers
@@ -72,5 +71,4 @@ async function checkJwt(req, res, next) {
 module.exports = {
   checkJwt,
   getBearerToken,
-  getAuthState,
 };

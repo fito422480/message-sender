@@ -1,5 +1,5 @@
 /**
- * WhatsApp Sender Pro - Clean CSS
+ * Monchito WA - Clean CSS
  */
 
 /* ========== Variables ========== */
@@ -17,12 +17,12 @@
   --border-color: #2f3640;
   --border-light: #3d444d;
   
-  --accent: #25D366;
-  --accent-hover: #20bd5a;
+  --accent: #E4191A;
+  --accent-hover: #c01516;
   
   --success: #4ade80;
   --warning: #fbbf24;
-  --danger: #f87171;
+  --danger: #f97316;
   --info: #60a5fa;
   
   /* Spacing */
@@ -589,7 +589,7 @@ body {
 
 .tab-more-item.active {
   color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
 }
 
 .tab-more-item i {
@@ -855,7 +855,7 @@ body {
 }
 
 .dash-action-btn.dash-action-wa i {
-  color: #25D366;
+  color: #E4191A;
 }
 
 /* ========== Dashboard Main Grid ========== */
@@ -1367,7 +1367,7 @@ body {
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, #25D366, #128C7E);
+  background: linear-gradient(90deg, #E4191A, #991b1b);
 }
 
 /* Header: icon + title */
@@ -1382,7 +1382,7 @@ body {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #25D366, #128C7E);
+  background: linear-gradient(135deg, #E4191A, #991b1b);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1406,7 +1406,7 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 0.8rem;
-  color: #25D366;
+  color: #E4191A;
   font-weight: 500;
   margin-top: 2px;
 }
@@ -1415,13 +1415,13 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #25D366;
+  background: #E4191A;
   animation: waPulse 2s ease-in-out infinite;
 }
 
 @keyframes waPulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.4); }
-  50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(37, 211, 102, 0); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
 }
 
 /* Phone number display */
@@ -1477,7 +1477,7 @@ body {
 }
 
 .wa-info-connected {
-  color: #25D366;
+  color: #E4191A;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1521,15 +1521,15 @@ body {
 }
 
 .wa-action-primary {
-  background: linear-gradient(135deg, #25D366, #128C7E);
+  background: linear-gradient(135deg, #E4191A, #991b1b);
   color: #fff;
   border-color: transparent;
 }
 
 .wa-action-primary:hover {
-  background: linear-gradient(135deg, #20bd5a, #0f7a6d);
+  background: linear-gradient(135deg, #c01516, #7f1d1d);
   border-color: transparent;
-  box-shadow: 0 4px 12px rgba(37, 211, 102, 0.3);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
 }
 
 .wa-action-secondary {
@@ -1584,7 +1584,7 @@ body {
 .form-control:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.15);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15);
 }
 
 .form-group {
@@ -1638,7 +1638,7 @@ body {
 
 .file-upload-label:hover {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.05);
+  background: rgba(220, 38, 38, 0.05);
 }
 
 .file-upload-label i {
@@ -1706,7 +1706,7 @@ body {
 
 .type-option input:checked + .option-content {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
 }
 
 .option-content i {
@@ -1822,7 +1822,7 @@ body {
 .btn-preview-template:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
 }
 
 /* Variable chips row in send page (matches templates page) */
@@ -1842,7 +1842,7 @@ body {
   color: white;
 }
 
-.template-badge-1 { background: #25D366; }
+.template-badge-1 { background: #E4191A; }
 .template-badge-2 { background: #60a5fa; }
 .template-badge-3 { background: #fbbf24; color: #1a1f26; }
 .template-badge-4 { background: #f87171; }
@@ -1924,7 +1924,7 @@ body {
 
 .variable-btn:hover {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
 }
 
 .variable-btn code {
@@ -1968,7 +1968,7 @@ body {
 
 .emoji-category.active {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
 }
 
 .emoji-grid {
@@ -2118,7 +2118,7 @@ body {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), #20bd5a);
+  background: linear-gradient(90deg, var(--accent), #c01516);
   border-radius: 4px;
   transition: width 0.3s ease;
   width: 0;
@@ -2213,7 +2213,7 @@ body {
 .csv-upload-area:hover,
 .csv-upload-area.dragover {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.05);
+  background: rgba(220, 38, 38, 0.05);
 }
 
 .csv-upload-area .upload-content i {
@@ -2926,12 +2926,12 @@ a.btn-link:hover {
 
 [data-theme="light"] .badge-trial-urgent {
   background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  color: #E4191A;
 }
 
 [data-theme="light"] .badge-expired {
   background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  color: #E4191A;
 }
 
 /* ── Trial Expired Modal ── */
@@ -3076,7 +3076,7 @@ a.btn-link:hover {
   color: #fff;
   background: var(--accent);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(37, 211, 102, 0.3);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
 }
 
 .rp-tab i {
@@ -3140,7 +3140,7 @@ a.btn-link:hover {
 
 .selector-search input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 211, 102, 0.15);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
   outline: none;
 }
 
@@ -3192,7 +3192,7 @@ a.btn-link:hover {
 .selector-action-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .selector-action-btn:active {
@@ -3247,8 +3247,8 @@ a.btn-link:hover {
 }
 
 .contact-checkbox-item.checked {
-  background: rgba(37, 211, 102, 0.06);
-  border-color: rgba(37, 211, 102, 0.15);
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.15);
 }
 
 .contact-checkbox-item input[type="checkbox"] {
@@ -3340,14 +3340,14 @@ a.btn-link:hover {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--accent);
-  background: rgba(37, 211, 102, 0.1);
-  border: 1px solid rgba(37, 211, 102, 0.25);
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.25);
   transition: var(--transition);
 }
 
 .selected-count-pill.has-selection {
-  background: rgba(37, 211, 102, 0.18);
-  border-color: rgba(37, 211, 102, 0.45);
+  background: rgba(220, 38, 38, 0.18);
+  border-color: rgba(220, 38, 38, 0.45);
 }
 
 .selected-count-pill span {
@@ -3379,7 +3379,7 @@ a.btn-link:hover {
 .pg-btn:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .pg-btn:disabled {
@@ -3454,7 +3454,7 @@ a.btn-link:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
   color: var(--accent);
   border-radius: var(--radius-md);
   font-size: 1.25rem;
@@ -3480,7 +3480,7 @@ a.btn-link:hover {
 
 .group-dropdown:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 211, 102, 0.15);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
   outline: none;
 }
 
@@ -3497,9 +3497,9 @@ a.btn-link:hover {
 }
 
 .group-count-info.has-count {
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
   color: var(--accent);
-  border: 1px solid rgba(37, 211, 102, 0.2);
+  border: 1px solid rgba(220, 38, 38, 0.2);
 }
 
 .group-count-info.has-count i {
@@ -3518,8 +3518,8 @@ a.btn-link:hover {
 
 .csv-drop-zone.drag-over {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.06);
-  box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.06);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
 }
 
 .csv-drop-zone input[type="file"] {
@@ -3552,7 +3552,7 @@ a.btn-link:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
   border-radius: 50%;
   margin-bottom: 4px;
 }
@@ -3585,8 +3585,8 @@ a.btn-link:hover {
   align-items: center;
   gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
-  background: rgba(37, 211, 102, 0.06);
-  border-top: 1px solid rgba(37, 211, 102, 0.15);
+  background: rgba(220, 38, 38, 0.06);
+  border-top: 1px solid rgba(220, 38, 38, 0.15);
 }
 
 .csv-file-icon {
@@ -3595,7 +3595,7 @@ a.btn-link:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 211, 102, 0.15);
+  background: rgba(220, 38, 38, 0.15);
   color: var(--accent);
   border-radius: var(--radius-sm);
   font-size: 1.125rem;
@@ -3644,8 +3644,8 @@ a.btn-link:hover {
   color: var(--accent);
   padding: 3px 12px;
   border-radius: 12px;
-  background: rgba(37, 211, 102, 0.1);
-  border: 1px solid rgba(37, 211, 102, 0.25);
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.25);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3653,8 +3653,8 @@ a.btn-link:hover {
 }
 
 .send-step-badge.has-recipients {
-  background: rgba(37, 211, 102, 0.18);
-  border-color: rgba(37, 211, 102, 0.45);
+  background: rgba(220, 38, 38, 0.18);
+  border-color: rgba(220, 38, 38, 0.45);
   animation: badgePulse 0.3s ease;
 }
 
@@ -3789,7 +3789,7 @@ a.btn-link:hover {
 }
 
 .media-chip.active {
-  background: rgba(37, 211, 102, 0.12);
+  background: rgba(220, 38, 38, 0.12);
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;
@@ -3839,7 +3839,7 @@ a.btn-link:hover {
 
 .media-file-label:hover {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .media-expand-inner .file-info {
@@ -3904,9 +3904,9 @@ a.btn-link:hover {
 }
 
 .interval-pill.interval-success.active {
-  border-color: #25D366;
-  background: rgba(37, 211, 102, 0.12);
-  color: #25D366;
+  border-color: #E4191A;
+  background: rgba(220, 38, 38, 0.12);
+  color: #E4191A;
 }
 
 .interval-pill.interval-info.active {
@@ -3939,8 +3939,8 @@ a.btn-link:hover {
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(37, 211, 102, 0.18);
-  color: #25D366;
+  background: rgba(220, 38, 38, 0.18);
+  color: #E4191A;
   margin-left: 4px;
   vertical-align: middle;
 }
@@ -3970,8 +3970,8 @@ a.btn-link:hover {
   margin-top: 10px;
   padding: 8px 12px;
   border-radius: 8px;
-  background: rgba(37, 211, 102, 0.07);
-  border: 1px solid rgba(37, 211, 102, 0.22);
+  background: rgba(220, 38, 38, 0.07);
+  border: 1px solid rgba(220, 38, 38, 0.22);
   color: var(--text-secondary, #6c757d);
   font-size: 0.78rem;
   line-height: 1.4;
@@ -4069,8 +4069,8 @@ a.btn-link:hover {
   align-items: center;
   gap: 4px;
   padding: 4px 12px;
-  background: rgba(37, 211, 102, 0.1);
-  border: 1px solid rgba(37, 211, 102, 0.3);
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.3);
   border-radius: 16px;
   color: var(--accent);
   font-size: 0.8125rem;
@@ -4080,7 +4080,7 @@ a.btn-link:hover {
 }
 
 .variable-chip:hover {
-  background: rgba(37, 211, 102, 0.2);
+  background: rgba(220, 38, 38, 0.2);
   border-color: var(--accent);
 }
 
@@ -4131,7 +4131,7 @@ a.btn-link:hover {
 }
 
 .template-preview-var {
-  background: rgba(37, 211, 102, 0.25);
+  background: rgba(220, 38, 38, 0.25);
   color: var(--accent);
   padding: 1px 4px;
   border-radius: 4px;
@@ -4139,7 +4139,7 @@ a.btn-link:hover {
 }
 
 [data-theme="light"] .template-preview-var {
-  background: rgba(37, 211, 102, 0.3);
+  background: rgba(220, 38, 38, 0.3);
   color: #075e54;
 }
 
@@ -4190,7 +4190,7 @@ a.btn-link:hover {
 
 .template-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 2px 8px rgba(37, 211, 102, 0.1);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.1);
 }
 
 .template-card-header {
@@ -4245,7 +4245,7 @@ a.btn-link:hover {
 .template-var-tag {
   display: inline-flex;
   padding: 1px 8px;
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
   color: var(--accent);
   border-radius: 10px;
   font-size: 0.6875rem;
@@ -4294,7 +4294,7 @@ a.btn-link:hover {
 .template-use-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.08);
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .template-edit-btn:hover {
@@ -4350,8 +4350,8 @@ a.btn-link:hover {
 }
 
 .plans-status-active {
-  background: rgba(37, 211, 102, 0.1);
-  border: 1px solid rgba(37, 211, 102, 0.25);
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.25);
   color: var(--accent);
 }
 
@@ -4396,11 +4396,11 @@ a.btn-link:hover {
 /* Popular card */
 .pricing-card-popular {
   border: 2px solid var(--accent);
-  box-shadow: 0 0 30px rgba(37, 211, 102, 0.1);
+  box-shadow: 0 0 30px rgba(220, 38, 38, 0.1);
 }
 
 .pricing-card-popular:hover {
-  box-shadow: 0 12px 40px rgba(37, 211, 102, 0.15);
+  box-shadow: 0 12px 40px rgba(220, 38, 38, 0.15);
 }
 
 .pricing-popular-badge {
@@ -4598,7 +4598,7 @@ a.btn-link:hover {
 .pricing-cta-accent:hover {
   background: var(--accent-hover);
   color: #fff;
-  box-shadow: 0 4px 16px rgba(37, 211, 102, 0.3);
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.3);
 }
 
 /* Contact section */
@@ -4690,11 +4690,11 @@ a.btn-link:hover {
 }
 
 [data-theme="light"] .pricing-card-popular {
-  box-shadow: 0 2px 20px rgba(37, 211, 102, 0.12);
+  box-shadow: 0 2px 20px rgba(220, 38, 38, 0.12);
 }
 
 [data-theme="light"] .pricing-card-popular:hover {
-  box-shadow: 0 12px 40px rgba(37, 211, 102, 0.18);
+  box-shadow: 0 12px 40px rgba(220, 38, 38, 0.18);
 }
 
 [data-theme="light"] .pricing-card-premium {
@@ -4899,7 +4899,7 @@ a.btn-link:hover {
 .admin-plan-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 211, 102, 0.15);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
 }
 
 /* Spin animation for loading icon */
@@ -4924,7 +4924,7 @@ a.btn-link:hover {
 }
 [data-theme="light"] .btn-admin-danger {
   background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+  color: #E4191A;
   border-color: rgba(220, 38, 38, 0.3);
 }
 
@@ -5193,7 +5193,7 @@ a.btn-link:hover {
 
 [data-theme="light"] .admin-status-disabled {
   background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+  color: #E4191A;
   border-color: rgba(220, 38, 38, 0.3);
 }
 
@@ -5211,7 +5211,7 @@ a.btn-link:hover {
 
 [data-theme="light"] .admin-plan-expired {
   background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+  color: #E4191A;
   border-color: rgba(220, 38, 38, 0.3);
 }
 
@@ -6686,7 +6686,7 @@ a.btn-link:hover {
 
 .cb-mode-option input[type="radio"]:checked + .cb-mode-label {
   border-color: var(--accent);
-  background: rgba(37, 211, 102, 0.05);
+  background: rgba(220, 38, 38, 0.05);
 }
 
 .cb-mode-option input[type="radio"]:checked + .cb-mode-label i {
@@ -6980,9 +6980,9 @@ a.btn-link:hover {
 }
 
 .inbox-bot-toggle-btn.bot-active {
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
   color: var(--accent);
-  border-color: rgba(37, 211, 102, 0.3);
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 .inbox-bot-toggle-btn.bot-active:hover {
@@ -6998,9 +6998,9 @@ a.btn-link:hover {
 }
 
 .inbox-bot-toggle-btn.bot-paused:hover {
-  background: rgba(37, 211, 102, 0.1);
+  background: rgba(220, 38, 38, 0.1);
   color: var(--accent);
-  border-color: rgba(37, 211, 102, 0.3);
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 .inbox-bot-toggle-btn:disabled {
@@ -7045,7 +7045,7 @@ a.btn-link:hover {
   gap: 4px;
   background: var(--bg-primary);
   /* WhatsApp-style pattern */
-  background-image: radial-gradient(circle at 20% 50%, rgba(37, 211, 102, 0.03) 0%, transparent 50%);
+  background-image: radial-gradient(circle at 20% 50%, rgba(220, 38, 38, 0.03) 0%, transparent 50%);
 }
 
 .inbox-date-divider {
@@ -7574,7 +7574,7 @@ a.btn-link:hover {
 .country-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 211, 102, 0.2);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
 }
 
 .country-select option {
@@ -7607,8 +7607,8 @@ a.btn-link:hover {
   gap: 6px;
   padding: 4px 12px;
   border-radius: 20px;
-  background: rgba(37, 211, 102, 0.1);
-  border: 1px solid rgba(37, 211, 102, 0.2);
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.2);
   color: var(--accent);
   font-size: 0.8rem;
   font-weight: 500;
@@ -7648,8 +7648,8 @@ a.btn-link:hover {
 }
 
 [data-theme="light"] .country-info-badge {
-  background: rgba(37, 211, 102, 0.08);
-  border-color: rgba(37, 211, 102, 0.2);
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.2);
   color: #16a34a;
 }
 

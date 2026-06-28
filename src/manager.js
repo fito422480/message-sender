@@ -1,197 +1,68 @@
-// src/manager.js
-const fs = require('fs');
-const path = require('path');
-const qrcode = require('qrcode');
-const {
-  default: makeWASocket,
-  DisconnectReason,
-} = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const { publicDir } = require('./config');
-const { MessageQueue } = require('./queue');
+const waha = require('./wahaClient');
 const logger = require('./logger');
-const { getAuthState } = require('./auth');
-const { getRedis } = require('./redisClient');
 const { db } = require('./firebaseAdmin');
 const { invalidateProfileCache } = require('./middleware/ensureUserProfile');
+
+const SESSION_NAME = waha.WAHA_DEFAULT_SESSION;
 
 class WhatsAppManager {
   constructor(userId = 'default') {
     this.userId = userId;
+    this.sessionName = SESSION_NAME;
 
-    // Estado de conexión
-    this.sock = null;
     this.isReady = false;
     this.connectionState = 'disconnected';
-    this.lastDisconnectReason = null;
-    this.isConnecting = false;
-    this.connectionPromise = null;
     this.lastActivity = Date.now();
 
-    // Autenticación (Baileys)
-    this.authState = null;
-    this.saveCreds = null;
-    this.authPath = null; // ruta por-usuario: .../auth_info/user-<id>
-    this._clearAuth = null; // cleanup function for current auth store
-
-    // QR
     this.qrCode = null;
     this.lastQRUpdate = null;
-    this.qrCaptureRequested = false;
 
-    // Info de user
     this.userInfo = null;
-    this.securityAlert = null;
+    this.meData = null;
 
-    // Watchdog
-    this._watchdogTimer = null;
-
-    // Rate limiting y conflictos
-    this.lastMessageTime = 0;
-    this.messageCount = 0;
-    this.maxMessagesPerMinute = 15;
-    this.conflictCount = 0;
-    this.lastConflictTime = 0;
-    this.isInCooldown = false;
-    this.activeCampaign = false; // Flag para indicar campaña activa
-
-    // Cola de mensajes
-    this.messageQueue = null;
-  }
-
-  // ========= Helpers internos =========
-
-  _getAuthDir() {
-    // Si ya setearon authPath, úsalo. Si no, por defecto: <publicDir>/../auth_info/user-<id>
-    if (this.authPath) return this.authPath;
-    const base = path.join(publicDir, '..', 'auth_info');
-    return path.join(base, `user-${this.userId}`);
+    this._pollTimer = null;
+    this._qrPollTimer = null;
+    this._isDestroyed = false;
   }
 
   _getScopedUserId() {
-    // Deriva userId desde el authPath si viene con "user-<id>"
-    if (this.authPath) {
-      const base = path.basename(this.authPath);
-      if (base.startsWith('user-')) return base.replace('user-', '');
-    }
     return this.userId;
-  }
-
-  _getUserQrPath() {
-    const uid = this._getScopedUserId();
-    const qrFileName = `qr-${uid}.png`;
-    return path.join(publicDir, qrFileName);
-  }
-
-  _delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async _clearRedisAuth() {
-    // Limpiar completamente todas las claves de autenticación en Redis para este usuario
-    try {
-      const redis = getRedis();
-      if (!redis || redis.status === 'end') {
-        logger.warn('Redis no disponible para limpieza');
-        return false;
-      }
-
-      const userId = this._getScopedUserId();
-      const patterns = [
-        `wa:auth:${userId}:*`,
-        `wa:owner:${userId}`,
-      ];
-
-      let totalDeleted = 0;
-      for (const pattern of patterns) {
-        let cursor = '0';
-        do {
-          const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-          cursor = nextCursor;
-          if (keys && keys.length) {
-            await redis.del(keys);
-            totalDeleted += keys.length;
-          }
-        } while (cursor !== '0');
-      }
-
-      logger.info({ userId, totalDeleted }, 'Redis auth limpiado completamente');
-      return totalDeleted > 0;
-    } catch (err) {
-      logger.error({ err: err?.message, userId: this._getScopedUserId() }, 'Error limpiando Redis auth');
-      return false;
-    }
   }
 
   updateActivity() {
     this.lastActivity = Date.now();
   }
 
-  /**
-   * Extract phone number from Baileys sock.user.id
-   * Format: 595971XXXXXX:XX@s.whatsapp.net → 595971XXXXXX
-   */
-  _extractPhoneFromJid(jid) {
-    if (!jid) return null;
-    return jid.split(':')[0].split('@')[0];
-  }
-
-  /**
-   * After successful WhatsApp connection, check phone uniqueness and store in Firestore.
-   * Returns true if phone is OK, false if phone belongs to another user (will disconnect).
-   */
   async _handlePhoneRegistration(phoneNumber) {
     const userId = this._getScopedUserId();
     try {
-      // Check if another user already has this phone
       const existing = await db.collection('users')
         .where('whatsappPhone', '==', phoneNumber)
         .limit(10)
         .get();
-
       const otherUser = existing.docs.find(doc => doc.id !== userId);
       if (otherUser) {
-        logger.warn(
-          { userId, phoneNumber, otherUserId: otherUser.id },
-          'Phone number already linked to another user'
-        );
+        logger.warn({ userId, phoneNumber, otherUserId: otherUser.id }, 'Phone number already linked to another user');
         return false;
       }
-
-      // Store phone in Firestore
-      await db.collection('users').doc(userId).update({
-        whatsappPhone: phoneNumber
-      });
+      await db.collection('users').doc(userId).set({ whatsappPhone: phoneNumber }, { merge: true });
       invalidateProfileCache(userId);
       logger.info({ userId, phoneNumber }, 'WhatsApp phone saved to Firestore');
       return true;
     } catch (err) {
-      // If Firestore is down, log warning but don't block WhatsApp
-      logger.warn(
-        { userId, phoneNumber, err: err?.message },
-        'Failed to register phone in Firestore — WhatsApp will still work'
-      );
-      return true; // Allow connection to proceed
+      logger.warn({ userId, phoneNumber, err: err?.message }, 'Failed to register phone in Firestore');
+      return true;
     }
   }
 
-  /**
-   * Clear whatsappPhone in Firestore for this user.
-   * Called on explicit logout/disconnect.
-   */
   async _clearFirestorePhone() {
     const userId = this._getScopedUserId();
     try {
-      await db.collection('users').doc(userId).update({
-        whatsappPhone: null
-      });
+      await db.collection('users').doc(userId).set({ whatsappPhone: null }, { merge: true });
       invalidateProfileCache(userId);
       logger.info({ userId }, 'WhatsApp phone cleared from Firestore');
     } catch (err) {
-      logger.warn(
-        { userId, err: err?.message },
-        'Failed to clear phone from Firestore'
-      );
+      logger.warn({ userId, err: err?.message }, 'Failed to clear phone from Firestore');
     }
   }
 
@@ -202,7 +73,6 @@ class WhatsAppManager {
       lastActivity: this.lastActivity,
       lastQRUpdate: this.lastQRUpdate || null,
       hasQR: !!this.qrCode,
-      securityAlert: this.securityAlert || null,
       userInfo: this.userInfo || null,
     };
   }
@@ -211,1021 +81,227 @@ class WhatsAppManager {
     return {
       isReady: this.isReady,
       connectionState: this.connectionState,
-      conflictCount: this.conflictCount,
-      messageCount: this.messageCount,
-      maxMessagesPerMinute: this.maxMessagesPerMinute,
-      isInCooldown: this.isInCooldown,
-      lastConflictTime: this.lastConflictTime,
-      isConnecting: this.isConnecting,
-      lastDisconnectReason: this.lastDisconnectReason,
-      canSendMessages:
-        this.isReady && !this.isInCooldown && this._checkRateLimit() && !this.isConnecting,
+      canSendMessages: this.isReady,
     };
   }
 
-  // ========= QR helpers =========
-  requestQrCapture() {
-    this.qrCaptureRequested = true;
-  }
-
-  async captureQrToDisk(userId = null) {
-    try {
-      if (!this.qrCode) return false;
-      const uid = userId || this._getScopedUserId();
-      const qrFileName = `qr-${uid}.png`;
-      const qrPath = path.join(publicDir, qrFileName);
-
-      await qrcode.toFile(qrPath, this.qrCode, {
-        color: { dark: '#128C7E', light: '#FFFFFF' },
-        width: 300,
-        margin: 1,
-      });
-      this.lastQRUpdate = Date.now();
-      logger.info({ qrPath, userId: uid }, 'QR guardado (captura inmediata)');
-      return true;
-    } catch (e) {
-      logger.error({ err: e?.message }, 'captureQrToDisk falló');
-      return false;
-    }
-  }
-
-  // ========= Connection watchdog =========
-
-  _startConnectionWatchdog() {
-    if (this._watchdogTimer) clearInterval(this._watchdogTimer);
-    this._watchdogTimer = setInterval(() => {
-      // If we have a socket, it has its own keepAlive — nothing to do.
-      if (this.sock) return;
-      // If we're actively connecting, in cooldown, or waiting for QR scan, skip.
-      if (this.isConnecting || this.isInCooldown || this.connectionState === 'qr_ready') return;
-      // If we were connected before (had auth) and are now disconnected without a
-      // pending reconnect, kick off a fresh attempt so the session self-heals.
-      if (!this.isReady && this.connectionState === 'disconnected') {
-        logger.info({ userId: this._getScopedUserId() }, 'Watchdog: sesión desconectada sin socket, reintentando...');
-        this.safeInitialize().catch(() => {});
-      }
-    }, 45_000);
-  }
-
-  // ========= Inicialización =========
+  // ─── Session lifecycle ─────────────────────────────────────────────────────
 
   async safeInitialize() {
-    if (this.isConnecting) {
-      logger.warn('Conexión ya en progreso, esperando...');
-      if (this.connectionPromise) {
-        try {
-          await this.connectionPromise;
-        } catch {
-          // swallow
-        }
+    if (this._isDestroyed) return;
+    logger.info({ userId: this._getScopedUserId() }, 'Initializing WAHA session');
+    try {
+      const existing = await waha.getSession(this.sessionName).catch(() => null);
+      if (!existing) {
+        logger.info({ userId: this._getScopedUserId() }, 'Creating new WAHA session');
+        await waha.createSession(this.sessionName).catch(() => {});
+      } else if (existing.status === 'STOPPED' || existing.status === 'FAILED') {
+        logger.info({ userId: this._getScopedUserId(), status: existing.status }, 'Starting existing WAHA session');
+        await waha.startSession(this.sessionName).catch(() => {});
       }
-      return;
+      this._startPolling();
+    } catch (err) {
+      logger.error({ err: err?.message, userId: this._getScopedUserId() }, 'Failed to initialize WAHA session');
     }
-
-    if (this.isInCooldown) {
-      logger.warn('En cooldown, cancelando intento de conexión');
-      return;
-    }
-
-    this.isConnecting = true;
-    this.connectionPromise = this._initialize()
-      .catch((err) => {
-        logger.error({ err: err?.message }, 'Error en inicialización segura');
-        throw err;
-      })
-      .finally(() => {
-        this.isConnecting = false;
-        this.connectionPromise = null;
-      });
-
-    return this.connectionPromise;
   }
 
-  async _initialize() {
-    if (this.sock) {
-      logger.info('Socket ya inicializado, reutilizando...');
-      return true;
-    }
+  async cleanInitialize() {
+    this._stopPolling();
+    this._stopQrPolling();
+    this.isReady = false;
+    this.connectionState = 'disconnected';
+    this.qrCode = null;
+    this.userInfo = null;
 
     try {
-      // Auth por usuario
-      const authDir = this._getAuthDir();
-      this.authPath = authDir;
-      if (!fs.existsSync(authDir)) {
-        fs.mkdirSync(authDir, { recursive: true });
-      }
-
-      const { state, saveCreds, clear } = await getAuthState(this.userId, authDir);
-      this.authState = state;
-      this.saveCreds = saveCreds;
-      this._clearAuth = typeof clear === 'function' ? clear : null;
-
-            // Socket Baileys
-      this.sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' }),
-        // 'Desktop' → companion_platform_id=ELECTRON(7) y DeviceProps=DESKTOP(7),
-        // idéntico a WhatsApp Desktop app. Android WA acepta Desktop; rechaza Chrome(web).
-        browser: ['Mac OS', 'Desktop', '14.4.1'],
-        version: [2, 3000, 1035194821],
-        syncFullHistory: false,
-        keepAliveIntervalMs: 25_000,
-        connectTimeoutMs: Math.max(20000, Number(process.env.WA_CONNECT_TIMEOUT_MS || 30000)),
-        defaultQueryTimeoutMs: Math.max(30000, Number(process.env.WA_QUERY_TIMEOUT_MS || 60000)),
-      });
-
-      // Watchdog: if we're supposed to be connected but the socket dies without
-      // firing a close event (e.g. silent TCP hang in K8s), detect and recover.
-      this._startConnectionWatchdog();
-
-      // expose manager to queue via socket reference
-      this.sock.manager = this;
-
-      this.sock.ev.on('creds.update', saveCreds);
-
-      this.sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        // QR recibido
-        if (qr) {
-          this.qrCode = qr;
-          this.connectionState = 'qr_ready';
-
-        const qrPath = this._getUserQrPath();
-        const shouldWrite = this.qrCaptureRequested || !fs.existsSync(qrPath);
-
-        if (shouldWrite) {
-          this.qrCaptureRequested = false;
-          // Ensure public directory exists before writing QR
-          try {
-            if (!fs.existsSync(publicDir)) {
-              fs.mkdirSync(publicDir, { recursive: true });
-            }
-          } catch (dirErr) {
-            logger.error({ err: dirErr?.message, publicDir }, 'No se pudo asegurar el directorio público para QR');
-          }
-          logger.info({ userId: this._getScopedUserId() }, 'QR Code recibido');
-          await qrcode.toFile(qrPath, qr, {
-            color: { dark: '#128C7E', light: '#FFFFFF' },
-              width: 300,
-              margin: 1,
-            });
-            logger.info({ qrPath }, 'QR guardado');
-            this.lastQRUpdate = Date.now();
-          }
-          // Store QR in Redis for cross-pod availability if enabled
-          if ((process.env.SESSION_STORE || 'file').toLowerCase() === 'redis') {
-            try {
-              const { setUserQr } = require('./stores/redisAuthState');
-              await setUserQr(this._getScopedUserId(), qr);
-            } catch {}
-          }
-        }
-
-        if (connection === 'open') {
-          logger.info('Conexión abierta');
-          this.connectionState = 'connected';
-
-          if (this.sock?.user) {
-            const phoneNumber = this.sock.user.id.split(':')[0];
-            const pushname = `Usuario ${phoneNumber}`;
-
-            this.userInfo = {
-              phoneNumber,
-              pushname,
-              jid: this.sock.user.id,
-            };
-            logger.info({ userInfo: this.userInfo }, 'Información del usuario obtenida');
-
-            // Task 4.2: Check phone uniqueness before allowing connection
-            const phoneOk = await this._handlePhoneRegistration(phoneNumber);
-            if (!phoneOk) {
-              this.isReady = false;
-              this.connectionState = 'phone_taken';
-              this.securityAlert = {
-                timestamp: Date.now(),
-                messages: ['Este número ya está asociado a otro usuario'],
-                phoneNumber,
-                type: 'phone_taken',
-              };
-
-              try {
-                await this.sock?.logout();
-                this.sock = null;
-                await this._deleteSessionFilesCompletely();
-              } catch { /* noop */ }
-              return;
-            }
-
-            this.isReady = true;
-            this.lastActivity = Date.now();
-
-            // borrar QR al conectar
-            const qrPath = this._getUserQrPath();
-            try {
-              if (fs.existsSync(qrPath)) {
-                fs.unlinkSync(qrPath);
-                logger.info({ qrPath }, 'QR eliminado tras conexión exitosa');
-              }
-            } catch {
-              /* noop */
-            }
-          }
-        }
-
-        if (connection === 'connecting') {
-          logger.info('Conectando...');
-          this.connectionState = 'connecting';
-        }
-
-        if (connection === 'close') {
-          const shouldReconnect =
-            lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-          const reason = lastDisconnect?.error?.message;
-          const statusCode = lastDisconnect?.error?.output?.statusCode;
-          this.lastDisconnectReason = reason;
-
-          logger.warn(
-            {
-              reason,
-              statusCode,
-              shouldReconnect,
-              userId: this._getScopedUserId(),
-            },
-            'Conexión cerrada'
-          );
-
-          this.isReady = false;
-          this.connectionState = 'disconnected';
-          this.userInfo = null;
-          this.sock = null;
-          this.isConnecting = false;
-
-          // Si fue logout/desvinculado, limpiar datos de Redis
-          // Skip if reason is a conflict — those are temporary disconnects, not real logouts.
-          // Cleaning auth on conflict wipes the session and forces a new QR scan.
-          const isConflict = reason && reason.toLowerCase().includes('conflict');
-          if (statusCode === DisconnectReason.loggedOut && !isConflict) {
-            logger.info({ userId: this.userId }, 'Dispositivo desvinculado, limpiando datos de Redis...');
-            try {
-              const { cleanupUserData } = require('./queueRedis');
-              await cleanupUserData(this.userId);
-              logger.info({ userId: this.userId }, 'Datos de Redis limpiados tras desvinculación');
-            } catch (cleanupError) {
-              logger.error({ userId: this.userId, error: cleanupError.message }, 'Error limpiando datos tras desvinculación');
-            }
-          }
-
-          // Timeout QR
-          if (reason && reason.includes('QR refs attempts ended')) {
-            logger.warn('Timeout de QR. Esperando antes de reconectar...');
-            if (shouldReconnect) {
-              setTimeout(() => {
-                logger.info('Reintentando conexión tras QR timeout...');
-                this.safeInitialize();
-              }, 30_000);
-            }
-            return;
-          }
-
-          // Conflictos
-          if (reason && reason.includes('conflict')) {
-            this.conflictCount++;
-            this.lastConflictTime = Date.now();
-
-            logger.warn(
-              `Conflicto detectado (#${this.conflictCount}). Campaña activa: ${this.activeCampaign}`
-            );
-
-            // Si hay campaña activa, NO entrar en cooldown - solo reconectar rápido
-            if (this.activeCampaign) {
-              logger.info('Campaña activa detectada, reconectando inmediatamente sin cooldown');
-              setTimeout(() => {
-                logger.info('Reintentando conexión durante campaña activa...');
-                this.safeInitialize();
-              }, 5000); // Solo 5 segundos de espera
-              return;
-            }
-
-            // NO limpiar Redis en conflict: el 440 significa que otra sesión está activa,
-            // pero las credenciales locales siguen siendo válidas. Si borramos Redis y
-            // generamos un nuevo QR, creamos un device link nuevo sin eliminar el anterior,
-            // lo que garantiza otro 440 en el siguiente intento → loop infinito.
-            // La estrategia correcta es reconectar con las mismas credenciales.
-
-            // AJUSTADO: Cooldown reducido - solo en conflictos repetidos SIN campaña
-            // Primer conflicto: 30 segundos, luego aumenta
-            const cooldownSeconds = this.conflictCount === 1 ? 30 : Math.min(this.conflictCount * 30, 120);
-            const cooldownMs = cooldownSeconds * 1000;
-            this.isInCooldown = true;
-
-            logger.info(`Entrando en cooldown por ${cooldownSeconds} segundos debido a conflicto (#${this.conflictCount})`);
-            setTimeout(() => {
-              this.isInCooldown = false;
-              logger.info('Cooldown terminado, intentando reconexión');
-              this.safeInitialize();
-            }, cooldownMs);
-
-            return;
-          }
-
-          // Reintento normal
-          if (shouldReconnect) {
-            if (!reason || !reason.includes('conflict')) {
-              this.conflictCount = Math.max(0, this.conflictCount - 1);
-            }
-
-            const baseDelay = 15_000;
-            const conflictPenalty = this.conflictCount * 5_000;
-            const totalDelay = baseDelay + conflictPenalty;
-
-            setTimeout(() => {
-              logger.info(
-                `Reintentando conexión (delay: ${totalDelay}ms, conflictos previos: ${this.conflictCount})...`
-              );
-              this.safeInitialize();
-            }, totalDelay);
-          }
-        }
-      });
-
-      // ── Chatbot: listen for incoming messages ──
-      this.sock.ev.on('messages.upsert', async ({ messages: msgs, type }) => {
-        if (type !== 'notify') return;
-        for (const msg of msgs) {
-          try {
-            const jid = msg.key?.remoteJid || '';
-            const fromMe = msg.key?.fromMe;
-
-            // Skip messages from self, status broadcasts
-            if (fromMe) continue;
-            if (jid === 'status@broadcast') continue;
-            if (!msg.message) continue;
-
-            // Skip groups
-            if (jid.endsWith('@g.us')) continue;
-
-            // Resolve phone number from JID
-            let contactPhone = null;
-
-            if (jid.endsWith('@s.whatsapp.net')) {
-              // Normal JID — extract phone directly
-              contactPhone = jid.split('@')[0].split(':')[0];
-            } else if (jid.endsWith('@lid')) {
-              // LID (Linked ID) — resolve to real phone using Baileys lidMapping
-              try {
-                const sock = this.sock;
-                if (sock?.signalRepository?.lidMapping?.getPNForLID) {
-                  const pn = await sock.signalRepository.lidMapping.getPNForLID(jid);
-                  if (pn) {
-                    contactPhone = pn.split('@')[0].split(':')[0];
-                    logger.info({ lid: jid, resolved: contactPhone }, 'Resolved LID to phone');
-                  }
-                }
-                if (!contactPhone) {
-                  // Fallback: check msg.key.participant
-                  const participant = msg.key.participant;
-                  if (participant && participant.endsWith('@s.whatsapp.net')) {
-                    contactPhone = participant.split('@')[0].split(':')[0];
-                    logger.info({ lid: jid, participant: contactPhone }, 'Resolved LID via participant');
-                  }
-                }
-              } catch (lidErr) {
-                logger.warn({ lid: jid, err: lidErr?.message }, 'Failed to resolve LID');
-              }
-            }
-
-            if (!contactPhone || contactPhone.length < 8) {
-              logger.debug({ jid, contactPhone }, 'Skipping message: could not resolve phone');
-              continue;
-            }
-
-            logger.info({ jid, contactPhone, fromMe }, 'Processing incoming message');
-
-            // Extract message content — unwrap common Baileys containers
-            let messageContent = msg.message;
-
-            // Skip protocol-only messages (no user-visible content)
-            if (messageContent.protocolMessage && Object.keys(messageContent).length === 1) continue;
-            if (messageContent.reactionMessage && Object.keys(messageContent).length === 1) continue;
-            if (messageContent.senderKeyDistributionMessage && Object.keys(messageContent).length === 1) continue;
-
-            // Strip senderKeyDistributionMessage wrapper — actual message is alongside it
-            if (messageContent.senderKeyDistributionMessage && Object.keys(messageContent).length > 1) {
-              // The real message fields coexist with senderKeyDistributionMessage; no unwrapping needed
-              // but we ensure we don't treat senderKeyDistributionMessage as content
-            }
-
-            // Unwrap ephemeral (disappearing) messages
-            if (messageContent.ephemeralMessage?.message) {
-              messageContent = messageContent.ephemeralMessage.message;
-            }
-
-            // Unwrap viewOnce messages
-            if (messageContent.viewOnceMessage?.message) {
-              messageContent = messageContent.viewOnceMessage.message;
-            }
-            if (messageContent.viewOnceMessageV2?.message) {
-              messageContent = messageContent.viewOnceMessageV2.message;
-            }
-
-            // Unwrap edited messages
-            if (messageContent.editedMessage?.message) {
-              messageContent = messageContent.editedMessage.message;
-            }
-
-            // Unwrap documentWithCaption
-            if (messageContent.documentWithCaptionMessage?.message) {
-              messageContent = messageContent.documentWithCaptionMessage.message;
-            }
-
-            let text = messageContent.conversation
-              || messageContent.extendedTextMessage?.text
-              || messageContent.imageMessage?.caption
-              || messageContent.videoMessage?.caption
-              || messageContent.documentMessage?.caption
-              || '';
-            let messageType = 'text';
-            let mediaUrl = null;
-
-            if (messageContent.imageMessage) messageType = 'image';
-            else if (messageContent.videoMessage) messageType = 'video';
-            else if (messageContent.audioMessage) messageType = 'audio';
-            else if (messageContent.documentMessage) messageType = 'document';
-            else if (messageContent.stickerMessage) messageType = 'sticker';
-
-            // Skip protocol messages that have no meaningful user content
-            if (messageType === 'text' && !text) continue;
-
-            const contactName = msg.pushName || '';
-            const userId = this._getScopedUserId();
-
-            logger.info({ userId, contactPhone, text: text?.substring(0, 50), messageType }, 'Incoming message received');
-
-            // Lazy-load chatbot engine to avoid circular deps
-            const chatbotEngine = require('./chatbotEngine');
-            const sock = this.sock;
-            if (!sock) continue;
-
-            // Fire-and-forget: don't block message processing
-            chatbotEngine.handleIncomingMessage(
-              userId,
-              { text, type: messageType, mediaUrl },
-              contactPhone,
-              contactName,
-              (jid, content) => sock.sendMessage(jid, content)
-            ).then(result => {
-              logger.info({ userId, contactPhone, result }, 'Chatbot response');
-            }).catch(err => {
-              logger.error({ err: err?.message, userId, contactPhone }, 'Chatbot handleIncomingMessage error');
-            });
-          } catch (err) {
-            logger.error({ err: err?.message }, 'Error in messages.upsert chatbot handler');
-          }
-        }
-      });
-
-      // Cola de mensajes por usuario
-      this.messageQueue = new MessageQueue(this.sock, this.userId);
-      return true;
-    } catch (e) {
-      logger.error({ err: e?.message }, 'Error inicializando Baileys');
-      return false;
-    }
-  }
-
-  // ========= Inicialización limpia (para /qr) =========
-
-  /**
-   * Mata cualquier socket existente, limpia auth de Redis, y crea un socket
-   * fresco sin credenciales. Baileys generará QR obligatoriamente.
-   */
-  async cleanInitialize() {
-    // 1. Matar socket actual: REMOVER listeners ANTES de cerrar.
-    //    Si no, el evento 'close' del socket viejo dispara el handler que
-    //    hace this.sock = null, destruyendo el socket nuevo que creamos después.
-    if (this.sock) {
-      const oldSock = this.sock;
-      this.sock = null; // desreferenciar ANTES de cerrar
-      try {
-        oldSock.ev.removeAllListeners();
-        oldSock.ws?.close();
-      } catch { /* noop */ }
-    }
-
-    // 2. Reset completo de estado
-    if (this._watchdogTimer) { clearInterval(this._watchdogTimer); this._watchdogTimer = null; }
-    this.isConnecting = false;
-    this.connectionPromise = null;
-    this.isReady = false;
-    this.qrCode = null;
-    this.connectionState = 'disconnected';
-    this.userInfo = null;
-    this.isInCooldown = false;
-
-    // 3. Limpiar auth de Redis directamente (no depende de _clearAuth)
-    const store = (process.env.SESSION_STORE || 'file').toLowerCase();
-    if (store === 'redis') {
-      await this._clearRedisAuth();
-    } else {
-      try { await this._deleteSessionFilesCompletely(); } catch {}
-    }
-    this.authState = null;
-    this.saveCreds = null;
-    this._clearAuth = null;
-
-    // 4. Pequeña pausa para que el event loop procese el cierre del socket viejo
-    await this._delay(500);
-
-    // 5. Inicializar con auth limpio → Baileys generará QR
-    logger.info({ userId: this._getScopedUserId() }, 'cleanInitialize: creando socket con auth fresco');
+      await waha.logoutSession(this.sessionName).catch(() => {});
+      await waha.deleteSession(this.sessionName).catch(() => {});
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000));
     await this.safeInitialize();
   }
 
-  // ========= QR manual =========
+  _startPolling() {
+    this._stopPolling();
+    this._pollTimer = setInterval(() => this._pollSession(), 3000);
+    this._pollSession();
+  }
 
-  async refreshQR() {
-    logger.info('Solicitando refrescar QR...');
-    if (this.isReady) {
-      logger.info('No se puede refrescar: ya autenticado');
-      return false;
+  _stopPolling() {
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+
+  _startQrPolling() {
+    this._stopQrPolling();
+    this._qrPollTimer = setInterval(() => this._fetchQR(), 2000);
+    this._fetchQR();
+  }
+
+  _stopQrPolling() {
+    if (this._qrPollTimer) {
+      clearInterval(this._qrPollTimer);
+      this._qrPollTimer = null;
+    }
+  }
+
+  async _pollSession() {
+    if (this._isDestroyed) return;
+    try {
+      const session = await waha.getSession(this.sessionName);
+      const status = session?.status || 'STOPPED';
+
+      switch (status) {
+        case 'WORKING':
+          if (!this.isReady) {
+            this.connectionState = 'connected';
+            this.isReady = true;
+            this._stopQrPolling();
+            this.qrCode = null;
+            this.lastQRUpdate = null;
+
+            if (session.me) {
+              const phoneNumber = session.me.id ? session.me.id.split('@')[0] : null;
+              this.meData = session.me;
+              this.userInfo = {
+                phoneNumber,
+                pushname: session.me.pushName || `Usuario ${phoneNumber}`,
+                jid: session.me.id,
+              };
+              if (phoneNumber) {
+                await this._handlePhoneRegistration(phoneNumber).catch(() => {});
+              }
+            }
+            logger.info({ userId: this._getScopedUserId(), status }, 'WAHA session ready');
+          }
+          break;
+
+        case 'SCAN_QR_CODE':
+          if (this.connectionState !== 'qr_ready') {
+            this.connectionState = 'qr_ready';
+            this.isReady = false;
+            this._startQrPolling();
+            logger.info({ userId: this._getScopedUserId() }, 'WAHA session needs QR scan');
+          }
+          break;
+
+        case 'STARTING':
+          this.connectionState = 'connecting';
+          this.isReady = false;
+          break;
+
+        case 'FAILED':
+          this.connectionState = 'disconnected';
+          this.isReady = false;
+          logger.warn({ userId: this._getScopedUserId() }, 'WAHA session failed');
+          break;
+
+        case 'STOPPED':
+          this.connectionState = 'disconnected';
+          this.isReady = false;
+          break;
+      }
+    } catch (err) {
+      logger.warn({ userId: this._getScopedUserId(), err: err?.message }, 'Poll session error');
+    }
+  }
+
+  async _fetchQR() {
+    if (this._isDestroyed || this.isReady) return;
+    try {
+      const qrBuffer = await waha.getQR(this.sessionName);
+      if (qrBuffer && qrBuffer.length > 0) {
+        this.qrCode = `data:image/png;base64,${qrBuffer.toString('base64')}`;
+        this.lastQRUpdate = Date.now();
+      }
+    } catch (err) {
+      if (!err.message?.includes('404') && !err.message?.includes('SCAN_QR_CODE')) {
+        logger.warn({ userId: this._getScopedUserId(), err: err?.message }, 'Fetch QR error');
+      }
+    }
+  }
+
+  async getQrBase64() {
+    if (!this.qrCode) {
+      await this._fetchQR();
+    }
+    return this.qrCode;
+  }
+
+  // ─── Logout ────────────────────────────────────────────────────────────────
+
+  async logout() {
+    logger.info({ userId: this._getScopedUserId() }, 'Logging out WAHA session');
+    this._stopPolling();
+    this._stopQrPolling();
+    this.isReady = false;
+    this.connectionState = 'logging_out';
+    this.qrCode = null;
+    this.userInfo = null;
+
+    try {
+      await waha.logoutSession(this.sessionName);
+    } catch (err) {
+      logger.warn({ userId: this._getScopedUserId(), err: err?.message }, 'Logout error');
     }
 
     try {
-      // cerrar socket si existe
-      if (this.sock) {
-        logger.info('Cerrando socket actual...');
-        try {
-          await this.sock.logout();
-        } catch {
-          /* noop */
-        }
-        this.sock = null;
-      }
+      await waha.stopSession(this.sessionName);
+    } catch {}
 
-      // borrar QR previo
-      const qrPath = this._getUserQrPath();
-      try {
-        if (fs.existsSync(qrPath)) {
-          fs.unlinkSync(qrPath);
-          logger.info({ qrPath }, 'QR anterior eliminado');
-        }
-      } catch {
-        /* noop */
-      }
+    await this._clearFirestorePhone();
 
-      // reset estado y borrar sesión
-      this.isReady = false;
-      this.qrCode = null;
-      this.connectionState = 'disconnected';
-      this.userInfo = null;
-      await this._deleteSessionFilesCompletely();
-
-      if ((process.env.SESSION_STORE || 'file').toLowerCase() === 'redis') {
-        try {
-          const { deleteUserQr } = require('./stores/redisAuthState');
-          await deleteUserQr(this._getScopedUserId());
-        } catch (e) {
-          logger.warn({ err: e?.message }, 'No se pudo eliminar QR previo de Redis');
-        }
-      }
-
-      // preparar compuerta para el próximo evento 'qr'
-      this.requestQrCapture();
-
-      await this._delay(2_000);
-      logger.info({ userId: this._getScopedUserId() }, 'Inicializando nuevo socket...');
-      await this.safeInitialize();
-      logger.info({ userId: this._getScopedUserId() }, 'Nuevo socket inicializado, esperando QR...');
-      return true;
-    } catch (e) {
-      logger.error({ err: e?.message }, 'Error al refrescar QR');
-      return false;
-    }
+    this.connectionState = 'disconnected';
+    logger.info({ userId: this._getScopedUserId() }, 'WAHA session logged out');
+    return true;
   }
 
-  // ========= Rate limiting =========
-
-  _checkRateLimit() {
-    const now = Date.now();
-    if (now - this.lastMessageTime > 60_000) {
-      this.messageCount = 0;
-    }
-    return this.messageCount < this.maxMessagesPerMinute;
-  }
-
-  recordMessage() {
-    const now = Date.now();
-    this.lastMessageTime = now;
-    this.messageCount++;
-    logger.info(
-      `Mensaje registrado: ${this.messageCount}/${this.maxMessagesPerMinute} en el último minuto`
-    );
-    if (this.messageCount >= this.maxMessagesPerMinute * 0.8) {
-      logger.warn(
-        `Cerca del límite de rate: ${this.messageCount}/${this.maxMessagesPerMinute} (último minuto)`
-      );
-    }
-  }
-
-  async waitForRateLimit() {
-    // DESACTIVADO: Rate limit deshabilitado por solicitud del cliente
-    // El cliente asume el riesgo de bloqueo de WhatsApp
-    return;
+  async forceCleanup() {
+    this._stopPolling();
+    this._stopQrPolling();
+    this.isReady = false;
+    this.connectionState = 'disconnected';
+    this.qrCode = null;
+    this.userInfo = null;
+    try {
+      await waha.logoutSession(this.sessionName).catch(() => {});
+      await waha.deleteSession(this.sessionName).catch(() => {});
+    } catch {}
   }
 
   async ensureConnection() {
-    if (!this.sock || this.sock.ws?.readyState !== 1) {
-      logger.warn({ userId: this._getScopedUserId() }, 'Conexión no activa, intentando reconectar...');
-      
-      // Si hay cooldown activo, no intentar reconectar
-      if (this.isInCooldown) {
-        throw new Error('En cooldown, no se puede reconectar ahora');
+    if (!this.isReady) {
+      const session = await waha.getSession(this.sessionName).catch(() => null);
+      if (!session || session.status !== 'WORKING') {
+        await this.safeInitialize();
+        await new Promise(r => setTimeout(r, 2000));
       }
-
-      await this.safeInitialize();
-      
-      // Esperar un momento para que se estabilice la conexión
-      await this._delay(2000);
-      
-      // Verificar nuevamente
-      if (!this.sock || this.sock.ws?.readyState !== 1) {
+      if (!this.isReady) {
         throw new Error('No se pudo restablecer la conexión');
       }
-      
-      logger.info({ userId: this._getScopedUserId() }, 'Conexión restablecida exitosamente');
     }
   }
 
-  setActiveCampaign(active) {
+  async setActiveCampaign(active) {
     this.activeCampaign = active;
-    logger.info({ userId: this._getScopedUserId(), activeCampaign: active }, 'Estado de campaña actualizado');
   }
 
   isActiveCampaign() {
-    return this.activeCampaign;
+    return this.activeCampaign || false;
   }
 
-  // ========= Limpieza de sesión (archivos) =========
+  // ─── Cleanup ───────────────────────────────────────────────────────────────
 
-  async _deleteSessionFilesCompletely() {
-    try {
-      logger.info('Eliminando estado de sesión...');
-      const store = (process.env.SESSION_STORE || 'file').toLowerCase();
-
-      if (store === 'redis') {
-        if (this._clearAuth) {
-          await this._clearAuth();
-        } else {
-          // _clearAuth no está seteado (sesión nunca inicializada en este pod).
-          // Usar _clearRedisAuth como fallback para limpiar auth stale de Redis.
-          logger.info('_clearAuth no disponible, usando _clearRedisAuth como fallback');
-          await this._clearRedisAuth();
-        }
-        this.authState = null;
-        this.saveCreds = null;
-        logger.info('Estado de sesión en Redis eliminado');
-        return;
-      }
-
-      // Fallback: delete local files
-      const sessionDir = this._getAuthDir();
-
-      if (!fs.existsSync(sessionDir)) {
-        logger.info('Directorio de sesiones no existe');
-        return;
-      }
-
-      let deleted = 0;
-      for (const entry of fs.readdirSync(sessionDir)) {
-        const p = path.join(sessionDir, entry);
-        try {
-          const stat = fs.lstatSync(p);
-          if (stat.isDirectory()) {
-            await fs.promises.rm(p, { recursive: true, force: true });
-            deleted++;
-          } else {
-            fs.unlinkSync(p);
-            deleted++;
-          }
-        } catch (error) {
-          logger.error({ p, err: error?.message }, 'Error eliminando archivo/directorio de sesión');
-        }
-      }
-
-      // Intentar eliminar el directorio padre si quedó vacío
-      try {
-        if (fs.existsSync(sessionDir) && fs.readdirSync(sessionDir).length === 0) {
-          fs.rmdirSync(sessionDir);
-          deleted++;
-        }
-      } catch {
-        /* noop */
-      }
-
-      // limpiar refs en memoria
-      this.authState = null;
-      this.saveCreds = null;
-
-      logger.info({ deleted, sessionDir }, 'Archivos de sesión eliminados COMPLETAMENTE');
-    } catch (error) {
-      logger.error(`Error al eliminar archivos de sesión completamente: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // Compat: alias del viejo nombre (si alguien lo llama)
-  async deleteSessionFiles() {
-    return this._deleteSessionFilesCompletely();
-  }
-
-  // ========= Logout(s) =========
-
-  /**
-   * Logout básico (limpia socket + estado + archivos de sesión)
-   * Devuelve true si finaliza sin throw (aunque hubiese fallbacks).
-   */
-  async logout() {
-    try {
-      logger.info(`Cerrando sesión de WhatsApp para usuario ${this.userId}`);
-
-      // Task 4.6: Clear phone from Firestore on explicit logout
-      await this._clearFirestorePhone();
-
-      // marcar estado
-      this.isReady = false;
-      this.connectionState = 'logging_out';
-
-      // si hay socket, intentar logout; fallback: end/ws.close
-      if (this.sock) {
-        try {
-          logger.info('Enviando logout a WhatsApp...');
-          await this.sock.logout();
-          logger.info('Logout enviado exitosamente a WhatsApp');
-
-          if (this.sock.ws) {
-            try {
-              this.sock.ws.close(1000, 'User logout');
-            } catch (wsError) {
-              logger.warn('Error cerrando WebSocket manualmente');
-            }
-          }
-        } catch (logoutError) {
-          logger.warn(`Error durante logout de WhatsApp: ${logoutError.message}`);
-          logger.info('Intentando desconexión forzada...');
-          try {
-            if (this.sock.end && typeof this.sock.end === 'function') this.sock.end();
-            if (this.sock.ws && this.sock.ws.close) this.sock.ws.close(1000, 'Forced logout');
-          } catch {
-            logger.warn('Error en desconexión forzada');
-          }
-        }
-        this.sock = null;
-      }
-
-      // limpiar estado
-      this.isReady = false;
-      this.connectionState = 'disconnected';
-      this.userInfo = null;
-      this.qrCode = null;
-      this.isConnecting = false;
-      this.connectionPromise = null;
-
-      // borrar sesión y QR
-      await this._deleteSessionFilesCompletely();
-
-      const qrPath = this._getUserQrPath();
-      try {
-        if (fs.existsSync(qrPath)) {
-          fs.unlinkSync(qrPath);
-          logger.info(`QR eliminado: ${qrPath}`);
-        }
-      } catch {
-        /* noop */
-      }
-
-      logger.info(`Sesión de WhatsApp cerrada COMPLETAMENTE para usuario ${this.userId}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error durante logout completo: ${error.message}`, error);
-
-      // forzar limpieza aun con error
-      this.isReady = false;
-      this.connectionState = 'disconnected';
-      this.sock = null;
-      await this._deleteSessionFilesCompletely();
-      throw error;
-    }
-  }
-
-  /**
-   * Logout robusto: varios intentos + verificación + cleanup forzado si hace falta.
-   */
-  async robustLogout() {
-    logger.info(`🚪 [${this.userId}] Iniciando logout robusto de WhatsApp...`);
-
-    const maxAttempts = 3;
-    const results = { success: false, attempts: [], finalState: null };
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      logger.info(`🔄 [${this.userId}] Intento de logout ${attempt}/${maxAttempts}`);
-      try {
-        const attemptResult = await this._performLogoutAttempt(attempt);
-        results.attempts.push(attemptResult);
-
-        const stateCheck = await this.verifyLogoutState();
-        if (stateCheck.fullyDisconnected) {
-          logger.info(`✅ [${this.userId}] Logout exitoso en intento ${attempt}`);
-          results.success = true;
-          results.finalState = stateCheck;
-          break;
-        }
-
-        logger.warn(`⚠️ [${this.userId}] Intento ${attempt} incompleto, reintentando...`);
-        await this._delay(2000 * attempt);
-      } catch (error) {
-        logger.error(`❌ [${this.userId}] Error en intento ${attempt}: ${error.message}`);
-        results.attempts.push({ attempt, error: error.message, success: false });
-        if (attempt < maxAttempts) await this._delay(3000 * attempt);
-      }
-    }
-
-    // Verificación final
-    results.finalState = await this.verifyLogoutState();
-
-    if (!results.success) {
-      logger.warn(`🔧 [${this.userId}] Logout robusto falló, aplicando limpieza forzada...`);
-      await this.forceCleanup();
-      results.finalState = await this.verifyLogoutState();
-    }
-
-    logger.info(`🎯 [${this.userId}] Logout robusto completado`);
-    return results;
-  }
-
-  async _performLogoutAttempt(attemptNumber) {
-    const result = { attempt: attemptNumber, steps: [], success: false };
-    try {
-      const logoutResult = await this.logout();
-      result.steps.push('base_logout_executed');
-      result.success = !!logoutResult;
-
-      // Si por algún motivo todavía hay socket, intentar matar ws
-      if (this.sock) {
-        try {
-          if (this.sock.ws && this.sock.ws.readyState === 1) {
-            this.sock.ws.terminate?.();
-            result.steps.push('websocket_terminated');
-          }
-        } catch {
-          result.steps.push('websocket_error');
-        }
-        this.sock = null;
-        result.steps.push('socket_nullified');
-      }
-
-      return result;
-    } catch (error) {
-      result.error = error.message;
-      result.steps.push('attempt_failed');
-      return result;
-    }
-  }
-
-  /**
-   * Verifica que la sesión esté completamente cerrada.
-   */
-  async verifyLogoutState() {
-    const state = {
-      socketNull: this.sock === null,
-      notReady: !this.isReady,
-      disconnectedState: this.connectionState === 'disconnected',
-      noUserInfo: this.userInfo === null,
-      filesClean: false,
-      qrClean: false,
-      fullyDisconnected: false,
-    };
-
-    // archivos de sesión
-    try {
-      const authDir = this._getAuthDir();
-      const credsPath = path.join(authDir, 'creds.json');
-      state.filesClean = !fs.existsSync(credsPath);
-    } catch (error) {
-      logger.warn(`⚠️ [${this.userId}] Error verificando archivos: ${error.message}`);
-      state.filesClean = true;
-    }
-
-    // qr
-    try {
-      const qrPath = this._getUserQrPath();
-      state.qrClean = !fs.existsSync(qrPath);
-    } catch {
-      state.qrClean = true;
-    }
-
-    state.fullyDisconnected =
-      state.socketNull &&
-      state.notReady &&
-      state.disconnectedState &&
-      state.noUserInfo &&
-      state.filesClean &&
-      state.qrClean;
-
-    return state;
-  }
-
-  /**
-   * Limpieza forzada (sin depender de logout).
-   * Verifica y elimina: socket, estado, auth files, QR.
-   */
-  async forceCleanup() {
-    logger.warn(`🔨 [${this.userId}] Aplicando limpieza forzada...`);
-    try {
-      // socket
-      if (this.sock) {
-        try {
-          this.sock.ws?.terminate?.();
-        } catch {
-          /* noop */
-        }
-        try {
-          if (this.sock.end && typeof this.sock.end === 'function') this.sock.end();
-        } catch {
-          /* noop */
-        }
-        this.sock = null;
-      }
-
-      // estado
-      this.isReady = false;
-      this.connectionState = 'disconnected';
-      this.userInfo = null;
-      this.qrCode = null;
-      this.isConnecting = false;
-      this.connectionPromise = null;
-
-      // archivos de sesión
-      await this._deleteSessionFilesCompletely();
-
-      // qr
-      const qrPath = this._getUserQrPath();
-      try {
-        if (fs.existsSync(qrPath)) {
-          fs.unlinkSync(qrPath);
-          logger.info(`🗑️ [${this.userId}] QR eliminado forzadamente`);
-        }
-      } catch {
-        /* noop */
-      }
-
-      logger.info(`✅ [${this.userId}] Limpieza forzada completada`);
-    } catch (error) {
-      logger.error(`❌ [${this.userId}] Error en limpieza forzada: ${error.message}`);
-    }
-  }
-
-  /**
-   * Desconexión rápida sin logout (emergencias).
-   */
-  async forceDisconnect() {
-    try {
-      logger.info(`Forzando desconexión para usuario ${this.userId}`);
-      if (this.sock) {
-        try {
-          if (this.sock.end && typeof this.sock.end === 'function') this.sock.end();
-        } catch (error) {
-          logger.warn(`Error en force disconnect: ${error.message}`);
-        }
-        this.sock = null;
-      }
-
-      this.isReady = false;
-      this.connectionState = 'disconnected';
-      this.userInfo = null;
-      this.qrCode = null;
-      this.isConnecting = false;
-      this.connectionPromise = null;
-
-      await this._deleteSessionFilesCompletely();
-      logger.info(`Desconexión forzada completada para usuario ${this.userId}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error durante desconexión forzada: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * Resetear cooldown manualmente (útil cuando hay conflictos persistentes)
-   */
-  resetCooldown() {
-    logger.info(`🔄 [${this.userId}] Reseteando cooldown manualmente`);
-    this.isInCooldown = false;
-    this.conflictCount = 0;
-    this.lastConflictTime = null;
-    logger.info(`✅ [${this.userId}] Cooldown reseteado`);
+  destroy() {
+    this._isDestroyed = true;
+    this._stopPolling();
+    this._stopQrPolling();
+    this.isReady = false;
+    this.connectionState = 'disconnected';
+    this.qrCode = null;
+    this.userInfo = null;
   }
 }
 

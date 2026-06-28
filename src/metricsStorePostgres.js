@@ -4,7 +4,6 @@
  * Redis used only for cache and session data
  */
 const pg = require('./postgresClient');
-const { getRedis } = require('./redisClient');
 const logger = require('./logger');
 
 // ========================================
@@ -726,44 +725,6 @@ async function dashboardMonthly(userId, months = 12) {
 }
 
 // ========================================
-// REDIS CACHE MANAGEMENT
-// ========================================
-
-async function scanAndDelete(redis, pattern) {
-  let cursor = '0';
-  let deleted = 0;
-  do {
-    const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-    cursor = nextCursor;
-    if (keys.length > 0) {
-      await redis.del(...keys);
-      deleted += keys.length;
-    }
-  } while (cursor !== '0');
-  return deleted;
-}
-
-async function clearUserCache(userId) {
-  const redis = getRedis();
-  const patterns = [
-    `ms:contacts:${userId}`,
-    `ms:contacts:idmap:${userId}`,
-    `ms:campaigns:${userId}`,
-    `ms:metrics:*:${userId}`,
-    `session:${userId}:*`,
-    `qr:${userId}:*`,
-  ];
-
-  let deleted = 0;
-  for (const pattern of patterns) {
-    deleted += await scanAndDelete(redis, pattern);
-  }
-
-  logger.info({ userId, deleted }, 'User Redis cache cleared');
-  return { deleted };
-}
-
-// ========================================
 // HELPERS
 // ========================================
 
@@ -875,6 +836,5 @@ module.exports = {
   dashboardCurrentMonth,
   dashboardMonthly,
   addMetricEvent,
-  // Cache
-  clearUserCache,
+
 };

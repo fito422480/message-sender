@@ -1,0 +1,38 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "metricEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "eventType", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "inboxMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "contactPhone", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "inboxMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "contactPhone", "order": "ASCENDING" },
+        { "fieldPath": "isFromContact", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "contacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "grupo", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

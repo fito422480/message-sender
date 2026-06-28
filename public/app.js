@@ -3054,7 +3054,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showTab('link');
   }
 
-  console.log('🚀 WhatsApp Sender Pro initialized successfully');
+  console.log('🚀 Monchito WA initialized successfully');
 });
 
 // Global functions for HTML onclick handlers

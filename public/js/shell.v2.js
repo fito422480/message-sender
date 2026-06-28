@@ -1,37 +1,41 @@
 (function () {
   // Opt-out: ?shell=v1 or localStorage.shellV2=0 reverts to legacy navbar
-  const PARAM = new URLSearchParams(location.search).get('shell');
-  const FLAG  = localStorage.getItem('shellV2');
-  if (PARAM === 'v1' || FLAG === '0') return;
+  const PARAM = new URLSearchParams(location.search).get("shell");
+  const FLAG = localStorage.getItem("shellV2");
+  if (PARAM === "v1" || FLAG === "0") return;
   // Persist opt-out if explicitly requested
-  if (PARAM === 'v1') localStorage.setItem('shellV2', '0');
+  if (PARAM === "v1") localStorage.setItem("shellV2", "0");
 
   const NAV_ITEMS = [
-    { tab: 'dashboard', icon: 'bi-speedometer2',      label: 'Dashboard'  },
-    { tab: 'whatsapp',  icon: 'bi-whatsapp',           label: 'WhatsApp'   },
-    { tab: 'send',      icon: 'bi-send',               label: 'Enviar'     },
-    { tab: 'contacts',  icon: 'bi-people',             label: 'Contactos'  },
-    { tab: 'inbox',     icon: 'bi-chat-dots',          label: 'Bandeja',     inboxBadge: true },
-    { tab: 'chatbot',   icon: 'bi-robot',              label: 'Chatbot'    },
+    { tab: "dashboard", icon: "bi-speedometer2", label: "Dashboard" },
+    { tab: "whatsapp", icon: "bi-whatsapp", label: "WhatsApp" },
+    { tab: "send", icon: "bi-send", label: "Enviar" },
+    { tab: "contacts", icon: "bi-people", label: "Contactos" },
+    { tab: "inbox", icon: "bi-chat-dots", label: "Bandeja", inboxBadge: true },
+    { tab: "chatbot", icon: "bi-robot", label: "Chatbot" },
     { label: null }, // group divider
-    { tab: 'templates', icon: 'bi-chat-square-text',   label: 'Plantillas' },
-    { tab: 'campaigns', icon: 'bi-megaphone',          label: 'Campañas'   },
-    { tab: 'plans',     icon: 'bi-credit-card',        label: 'Planes'     },
-    { tab: 'api',       icon: 'bi-code-slash',         label: 'API'        },
-    { tab: 'admin',     icon: 'bi-shield-lock',        label: 'Admin',     adminOnly: true },
+    { tab: "templates", icon: "bi-chat-square-text", label: "Plantillas" },
+    { tab: "campaigns", icon: "bi-megaphone", label: "Campañas" },
+    { tab: "plans", icon: "bi-credit-card", label: "Planes" },
+    { tab: "api", icon: "bi-code-slash", label: "API" },
+    { tab: "admin", icon: "bi-shield-lock", label: "Admin", adminOnly: true },
   ];
 
   function buildNavHtml() {
-    let html = '';
+    let html = "";
     let groupStarted = false;
-    NAV_ITEMS.forEach(item => {
+    NAV_ITEMS.forEach((item) => {
       if (!item.tab) {
         html += '<div class="v2-nav-group-label">Más</div>';
         groupStarted = true;
         return;
       }
-      const badge = item.inboxBadge ? '<span id="v2-inbox-badge" class="v2-nav-badge d-none">0</span>' : '';
-      const adminAttr = item.adminOnly ? ' data-admin-only="true" style="display:none"' : '';
+      const badge = item.inboxBadge
+        ? '<span id="v2-inbox-badge" class="v2-nav-badge d-none">0</span>'
+        : "";
+      const adminAttr = item.adminOnly
+        ? ' data-admin-only="true" style="display:none"'
+        : "";
       html += `<button class="v2-nav-item" data-tab="${item.tab}"${adminAttr}>
         <i class="bi ${item.icon}"></i>
         <span>${item.label}</span>
@@ -45,7 +49,7 @@
     <aside id="v2-sidebar">
       <div class="v2-sidebar-header">
         <i class="bi bi-whatsapp"></i>
-        <span>WA Sender Pro</span>
+        <span>Monchito WA</span>
       </div>
       <nav class="v2-sidebar-nav">${buildNavHtml()}</nav>
       <div class="v2-sidebar-footer">
@@ -90,145 +94,193 @@
     <div id="v2-sidebar-overlay"></div>`;
 
   function init() {
-    document.body.classList.add('shell-v2-active');
-    document.body.insertAdjacentHTML('afterbegin', shellHtml);
+    document.body.classList.add("shell-v2-active");
+    document.body.insertAdjacentHTML("afterbegin", shellHtml);
 
     // Nav item clicks → delegate to existing hidden tab buttons
-    document.querySelectorAll('#v2-sidebar .v2-nav-item').forEach(btn => {
-      btn.addEventListener('click', () => {
+    document.querySelectorAll("#v2-sidebar .v2-nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
         const tab = btn.dataset.tab;
-        const target = document.querySelector(`.tab-btn[data-tab="${tab}"]`) ||
-                       document.querySelector(`.tab-more-item[data-tab="${tab}"]`);
+        const target =
+          document.querySelector(`.tab-btn[data-tab="${tab}"]`) ||
+          document.querySelector(`.tab-more-item[data-tab="${tab}"]`);
         if (target) target.click();
-        document.body.classList.remove('shell-v2-mobile-open');
+        document.body.classList.remove("shell-v2-mobile-open");
       });
     });
 
     // Hamburger toggle
-    document.getElementById('v2-hamburger').addEventListener('click', () => {
-      document.body.classList.toggle('shell-v2-mobile-open');
+    document.getElementById("v2-hamburger").addEventListener("click", () => {
+      document.body.classList.toggle("shell-v2-mobile-open");
     });
-    document.getElementById('v2-sidebar-overlay').addEventListener('click', () => {
-      document.body.classList.remove('shell-v2-mobile-open');
-    });
+    document
+      .getElementById("v2-sidebar-overlay")
+      .addEventListener("click", () => {
+        document.body.classList.remove("shell-v2-mobile-open");
+      });
 
     // Theme toggle
     function syncThemeIcon() {
-      const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-      document.getElementById('v2-theme-icon').className = isDark ? 'bi bi-moon-fill' : 'bi bi-sun-fill';
+      const isDark =
+        document.documentElement.getAttribute("data-theme") !== "light";
+      document.getElementById("v2-theme-icon").className = isDark
+        ? "bi bi-moon-fill"
+        : "bi bi-sun-fill";
     }
-    document.getElementById('v2-theme-btn').addEventListener('click', () => {
-      const sw = document.getElementById('themeSwitch');
-      if (sw) sw.click(); else {
+    document.getElementById("v2-theme-btn").addEventListener("click", () => {
+      const sw = document.getElementById("themeSwitch");
+      if (sw) sw.click();
+      else {
         const html = document.documentElement;
-        html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+        html.setAttribute(
+          "data-theme",
+          html.getAttribute("data-theme") === "light" ? "dark" : "light",
+        );
       }
     });
     syncThemeIcon();
-    new MutationObserver(syncThemeIcon).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    new MutationObserver(syncThemeIcon).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
 
     // User chip → toggle own dropdown
-    const userChip = document.getElementById('v2-user-chip');
-    const userDropdown = document.getElementById('v2-user-dropdown');
-    userChip.addEventListener('click', (e) => {
+    const userChip = document.getElementById("v2-user-chip");
+    const userDropdown = document.getElementById("v2-user-dropdown");
+    userChip.addEventListener("click", (e) => {
       e.stopPropagation();
-      userDropdown.classList.toggle('open');
+      userDropdown.classList.toggle("open");
     });
-    document.addEventListener('click', (e) => {
+    document.addEventListener("click", (e) => {
       if (!userDropdown.contains(e.target) && e.target !== userChip) {
-        userDropdown.classList.remove('open');
+        userDropdown.classList.remove("open");
       }
     });
 
     // Logout
-    document.getElementById('v2-dd-logout').addEventListener('click', () => {
-      userDropdown.classList.remove('open');
-      if (typeof window.logout === 'function') window.logout();
+    document.getElementById("v2-dd-logout").addEventListener("click", () => {
+      userDropdown.classList.remove("open");
+      if (typeof window.logout === "function") window.logout();
     });
 
     // Change country → delegate to existing handler
-    document.getElementById('v2-dd-country').addEventListener('click', () => {
-      userDropdown.classList.remove('open');
-      const btn = document.getElementById('profile-change-country') ||
-                  document.getElementById('country-indicator');
+    document.getElementById("v2-dd-country").addEventListener("click", () => {
+      userDropdown.classList.remove("open");
+      const btn =
+        document.getElementById("profile-change-country") ||
+        document.getElementById("country-indicator");
       if (btn) btn.click();
     });
 
     // Sync active tab in sidebar
     function syncActiveTab() {
-      const activePane = document.querySelector('.tab-pane.active');
-      const activeTab  = activePane?.id || document.querySelector('.tab-btn.active')?.dataset.tab;
-      document.querySelectorAll('#v2-sidebar .v2-nav-item').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === activeTab);
+      const activePane = document.querySelector(".tab-pane.active");
+      const activeTab =
+        activePane?.id ||
+        document.querySelector(".tab-btn.active")?.dataset.tab;
+      document.querySelectorAll("#v2-sidebar .v2-nav-item").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === activeTab);
       });
     }
-    const mainEl = document.querySelector('.main') || document.body;
-    new MutationObserver(syncActiveTab).observe(mainEl, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    const mainEl = document.querySelector(".main") || document.body;
+    new MutationObserver(syncActiveTab).observe(mainEl, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
     syncActiveTab();
 
     // Sync user info (name populated async by main.js)
     function syncUserInfo() {
-      const name  = document.getElementById('user-name')?.textContent.trim();
-      const email = document.getElementById('profile-display-email')?.textContent.trim();
-      const plan  = document.getElementById('profile-plan-badge')?.textContent.trim();
+      const name = document.getElementById("user-name")?.textContent.trim();
+      const email = document
+        .getElementById("profile-display-email")
+        ?.textContent.trim();
+      const plan = document
+        .getElementById("profile-plan-badge")
+        ?.textContent.trim();
       if (name) {
-        document.getElementById('v2-footer-name').textContent = name;
-        document.getElementById('v2-chip-name').textContent   = name;
-        document.getElementById('v2-dd-name').textContent     = name;
+        document.getElementById("v2-footer-name").textContent = name;
+        document.getElementById("v2-chip-name").textContent = name;
+        document.getElementById("v2-dd-name").textContent = name;
       }
-      if (email) document.getElementById('v2-dd-email').textContent = email;
+      if (email) document.getElementById("v2-dd-email").textContent = email;
       if (plan) {
-        document.getElementById('v2-footer-plan').textContent = plan;
-        document.getElementById('v2-dd-plan').textContent     = plan;
+        document.getElementById("v2-footer-plan").textContent = plan;
+        document.getElementById("v2-dd-plan").textContent = plan;
       }
     }
-    const userInfoEl = document.getElementById('user-info');
-    if (userInfoEl) new MutationObserver(syncUserInfo).observe(userInfoEl, { subtree: true, childList: true, characterData: true });
+    const userInfoEl = document.getElementById("user-info");
+    if (userInfoEl)
+      new MutationObserver(syncUserInfo).observe(userInfoEl, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
     syncUserInfo();
     // Retry after auth settles
     setTimeout(syncUserInfo, 2000);
 
     // Sync connection status badge
     function syncConn() {
-      const src = document.getElementById('connection-status');
+      const src = document.getElementById("connection-status");
       if (!src) return;
-      const v2  = document.getElementById('v2-conn-badge');
-      const txt = document.getElementById('v2-conn-text');
-      txt.textContent = src.querySelector('.status-text')?.textContent || '';
-      v2.className = 'v2-conn-badge';
-      if (src.classList.contains('connected'))    v2.classList.add('connected');
-      else if (src.classList.contains('qr'))      v2.classList.add('qr');
-      else                                         v2.classList.add('disconnected');
+      const v2 = document.getElementById("v2-conn-badge");
+      const txt = document.getElementById("v2-conn-text");
+      txt.textContent = src.querySelector(".status-text")?.textContent || "";
+      v2.className = "v2-conn-badge";
+      if (src.classList.contains("connected")) v2.classList.add("connected");
+      else if (src.classList.contains("qr")) v2.classList.add("qr");
+      else v2.classList.add("disconnected");
     }
-    const connEl = document.getElementById('connection-status');
-    if (connEl) new MutationObserver(syncConn).observe(connEl, { subtree: true, attributes: true, childList: true, characterData: true });
+    const connEl = document.getElementById("connection-status");
+    if (connEl)
+      new MutationObserver(syncConn).observe(connEl, {
+        subtree: true,
+        attributes: true,
+        childList: true,
+        characterData: true,
+      });
     syncConn();
 
     // Sync inbox unread badge
     function syncInbox() {
-      const src = document.getElementById('inbox-unread-badge');
-      const dst = document.getElementById('v2-inbox-badge');
+      const src = document.getElementById("inbox-unread-badge");
+      const dst = document.getElementById("v2-inbox-badge");
       if (!src || !dst) return;
       dst.textContent = src.textContent.trim();
-      dst.classList.toggle('d-none', src.classList.contains('d-none'));
+      dst.classList.toggle("d-none", src.classList.contains("d-none"));
     }
-    const inboxBadge = document.getElementById('inbox-unread-badge');
-    if (inboxBadge) new MutationObserver(syncInbox).observe(inboxBadge, { subtree: true, attributes: true, childList: true, characterData: true });
+    const inboxBadge = document.getElementById("inbox-unread-badge");
+    if (inboxBadge)
+      new MutationObserver(syncInbox).observe(inboxBadge, {
+        subtree: true,
+        attributes: true,
+        childList: true,
+        characterData: true,
+      });
     syncInbox();
 
     // Sync admin tab visibility
     function syncAdmin() {
-      const src = document.getElementById('admin-tab-btn');
-      const dst = document.querySelector('#v2-sidebar .v2-nav-item[data-tab="admin"]');
-      if (src && dst) dst.style.display = src.classList.contains('d-none') ? 'none' : '';
+      const src = document.getElementById("admin-tab-btn");
+      const dst = document.querySelector(
+        '#v2-sidebar .v2-nav-item[data-tab="admin"]',
+      );
+      if (src && dst)
+        dst.style.display = src.classList.contains("d-none") ? "none" : "";
     }
-    const adminBtn = document.getElementById('admin-tab-btn');
-    if (adminBtn) new MutationObserver(syncAdmin).observe(adminBtn, { attributes: true, attributeFilter: ['class'] });
+    const adminBtn = document.getElementById("admin-tab-btn");
+    if (adminBtn)
+      new MutationObserver(syncAdmin).observe(adminBtn, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
     syncAdmin();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
   }

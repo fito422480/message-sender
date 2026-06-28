@@ -62,7 +62,7 @@ async function checkTrial(req, res, next) {
 
       // Trial expired — update Firestore
       try {
-        await db.collection('users').doc(profile.uid).update({ plan: 'expired' });
+        await db.collection('users').doc(profile.uid).set({ plan: 'expired' }, { merge: true });
         invalidateProfileCache(profile.uid);
         logger.info({ uid: profile.uid }, 'Trial expired, plan updated to expired');
       } catch (updateErr) {

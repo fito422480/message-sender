@@ -1,10 +1,11 @@
-// src/chatbotEngine.js
+const { admin, db } = require('./firebaseAdmin');
 const logger = require('./logger');
-const pg = require('./postgresClient');
 const crypto = require('crypto');
+const waha = require('./wahaClient');
 
-// ─── Encryption helpers for AI API keys ───────────────────────────────────────
-const ENCRYPTION_KEY = process.env.CHATBOT_ENCRYPTION_KEY || 'default-chatbot-key-change-me-32!'; // 32 bytes
+const FieldValue = admin.firestore.FieldValue;
+
+const ENCRYPTION_KEY = process.env.CHATBOT_ENCRYPTION_KEY || 'default-chatbot-key-change-me-32!';
 const ALGORITHM = 'aes-256-cbc';
 
 function encrypt(text) {
@@ -33,111 +34,20 @@ function decrypt(text) {
   }
 }
 
-// ─── Ensure tables exist (memoized) ──────────────────────────────────────────
 const ensureChatbotTables = (() => {
   let created = false;
   return async () => {
     if (created) return;
-    await pg.query(`
-      CREATE TABLE IF NOT EXISTS chatbot_configs (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
-        name VARCHAR(255) NOT NULL DEFAULT 'Mi Bot',
-        enabled BOOLEAN DEFAULT false,
-        active_hours_start TIME DEFAULT '08:00',
-        active_hours_end TIME DEFAULT '22:00',
-        active_days INTEGER[] DEFAULT '{1,2,3,4,5}',
-        cooldown_minutes INTEGER DEFAULT 30,
-        only_known_contacts BOOLEAN DEFAULT true,
-        max_responses_per_contact INTEGER DEFAULT 5,
-        ai_enabled BOOLEAN DEFAULT false,
-        ai_provider VARCHAR(50),
-        ai_api_key_encrypted TEXT,
-        ai_model VARCHAR(100),
-        ai_system_prompt TEXT,
-        welcome_message TEXT,
-        fallback_message TEXT DEFAULT 'No reconozco esa opción. Por favor elige un número del menú:',
-        exit_message TEXT DEFAULT 'Has salido del menú. Escribe *menu* cuando quieras volver a empezar.',
-        deactivation_message TEXT DEFAULT 'Un agente te atenderá pronto. Gracias por tu paciencia.',
-        start_node_id VARCHAR(100),
-        activation_keywords TEXT[] DEFAULT '{hola,hi,hello,hey,buenos dias,buenas tardes,buenas noches,buen dia,buenas,ola,hla,holaa,menu,menú,inicio,info,informacion,información,ayuda,help,start}',
-        deactivation_keywords TEXT[] DEFAULT '{agente,humano,operador,persona real,quiero hablar,no entiendo,basta,stop,parar,chau,adios,bye}',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_chatbot_configs_user ON chatbot_configs(user_id);
-
-      CREATE TABLE IF NOT EXISTS chatbot_nodes (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        config_id UUID NOT NULL REFERENCES chatbot_configs(id) ON DELETE CASCADE,
-        node_id VARCHAR(100) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        content JSONB NOT NULL DEFAULT '{}',
-        position_x INTEGER DEFAULT 0,
-        position_y INTEGER DEFAULT 0,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_chatbot_nodes_config ON chatbot_nodes(config_id);
-      CREATE INDEX IF NOT EXISTS idx_chatbot_nodes_node_id ON chatbot_nodes(config_id, node_id);
-
-      CREATE TABLE IF NOT EXISTS chatbot_conversations (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
-        contact_phone VARCHAR(20) NOT NULL,
-        current_node_id VARCHAR(100),
-        context JSONB DEFAULT '{}',
-        responses_today INTEGER DEFAULT 0,
-        last_response_at TIMESTAMPTZ,
-        last_human_intervention_at TIMESTAMPTZ,
-        bot_paused BOOLEAN DEFAULT false,
-        is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(user_id, contact_phone)
-      );
-      CREATE INDEX IF NOT EXISTS idx_chatbot_conv_user ON chatbot_conversations(user_id);
-      CREATE INDEX IF NOT EXISTS idx_chatbot_conv_user_phone ON chatbot_conversations(user_id, contact_phone);
-
-      CREATE TABLE IF NOT EXISTS incoming_messages (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
-        contact_phone VARCHAR(20) NOT NULL,
-        contact_name VARCHAR(255),
-        message_text TEXT,
-        message_type VARCHAR(50) DEFAULT 'text',
-        media_url TEXT,
-        is_from_contact BOOLEAN DEFAULT true,
-        is_bot_reply BOOLEAN DEFAULT false,
-        read BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_incoming_user_phone ON incoming_messages(user_id, contact_phone, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_incoming_user_date ON incoming_messages(user_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_incoming_unread ON incoming_messages(user_id, read, created_at DESC);
-
-      -- Add columns for existing databases
-      ALTER TABLE chatbot_conversations ADD COLUMN IF NOT EXISTS bot_paused BOOLEAN DEFAULT false;
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS exit_message TEXT DEFAULT 'Has salido del menú. Escribe *menu* cuando quieras volver a empezar.';
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS deactivation_message TEXT DEFAULT 'Un agente te atenderá pronto. Gracias por tu paciencia.';
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS start_node_id VARCHAR(100);
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS activation_keywords TEXT[] DEFAULT '{hola,hi,hello,hey,buenos dias,buenas tardes,buenas noches,buen dia,buenas,ola,hla,holaa,menu,menú,inicio,info,informacion,información,ayuda,help,start}';
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS deactivation_keywords TEXT[] DEFAULT '{agente,humano,operador,persona real,quiero hablar,no entiendo,basta,stop,parar,chau,adios,bye}';
-      ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS bot_mode VARCHAR(20) DEFAULT 'flow';
-      UPDATE chatbot_configs SET activation_keywords = '{hola,hi,hello,hey,buenos dias,buenas tardes,buenas noches,buen dia,buenas,ola,hla,holaa,menu,menú,inicio,info,informacion,información,ayuda,help,start}' WHERE activation_keywords IS NULL;
-      UPDATE chatbot_configs SET deactivation_keywords = '{agente,humano,operador,persona real,quiero hablar,no entiendo,basta,stop,parar,chau,adios,bye}' WHERE deactivation_keywords IS NULL;
-    `);
     created = true;
-    logger.info('Chatbot tables ensured');
+    logger.info('Chatbot initialized (Firestore)');
   };
 })();
 
-// ─── Accent-insensitive normalization ────────────────────────────────────────
 function normalizeText(str) {
   if (!str) return '';
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
-// ─── Default keywords (used when config doesn't have custom ones) ───────────
 const DEFAULT_ACTIVATION_KEYWORDS = [
   'hola', 'hi', 'hello', 'hey', 'buenos dias', 'buenas tardes', 'buenas noches',
   'buen dia', 'buenas', 'ola', 'hla', 'holaa', 'menu', 'menú', 'inicio',
@@ -178,30 +88,20 @@ function isDeactivationMessage(text, config) {
   return keywords.some(kw => normalized === normalizeText(kw) || normalized.includes(normalizeText(kw)));
 }
 
-// ─── Config cache (per-user, short TTL) ──────────────────────────────────────
 const configCache = new Map();
-const CONFIG_CACHE_TTL = 30_000; // 30 seconds
+const CONFIG_CACHE_TTL = 30_000;
 
 async function getCachedConfig(userId) {
   const cached = configCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.config;
   }
-  const result = await pg.query(
-    'SELECT * FROM chatbot_configs WHERE user_id = $1 LIMIT 1',
-    [userId]
-  );
-  const config = result.rows[0] || null;
-  // Attach user's country for timezone-aware checks
+  const snap = await db.collection(`users/${userId}/chatbot`).doc('config').get();
+  const config = snap.exists ? snap.data() : null;
   if (config) {
     try {
-      const { db } = require('./firebaseAdmin');
-      if (db) {
-        const snap = await db.collection('users').doc(userId).get();
-        config._userCountry = snap.exists ? (snap.data().country || 'PY') : 'PY';
-      } else {
-        config._userCountry = 'PY';
-      }
+      const userSnap = await db.collection('users').doc(userId).get();
+      config._userCountry = userSnap.exists ? (userSnap.data().country || 'PY') : 'PY';
     } catch {
       config._userCountry = 'PY';
     }
@@ -214,29 +114,35 @@ function invalidateConfigCache(userId) {
   configCache.delete(userId);
 }
 
-// ─── Node cache (per config_id) ──────────────────────────────────────────────
 const nodesCache = new Map();
 const NODES_CACHE_TTL = 30_000;
 
-async function getCachedNodes(configId) {
-  const cached = nodesCache.get(configId);
+async function getCachedNodes(userId) {
+  const cached = nodesCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.nodes;
   }
-  const result = await pg.query(
-    'SELECT * FROM chatbot_nodes WHERE config_id = $1',
-    [configId]
-  );
-  const nodes = result.rows;
-  nodesCache.set(configId, { nodes, expiresAt: Date.now() + NODES_CACHE_TTL });
+  const snap = await db.collection(`users/${userId}/chatbotNodes`).get();
+  const nodes = [];
+  snap.forEach(d => {
+    const data = d.data();
+    nodes.push({
+      id: d.id, ...data,
+      node_id: data.nodeId || data.node_id,
+      type: data.type,
+      content: data.content || {},
+      position_x: data.positionX || data.position_x || 0,
+      position_y: data.positionY || data.position_y || 0,
+    });
+  });
+  nodesCache.set(userId, { nodes, expiresAt: Date.now() + NODES_CACHE_TTL });
   return nodes;
 }
 
-function invalidateNodesCache(configId) {
-  nodesCache.delete(configId);
+function invalidateNodesCache(userId) {
+  nodesCache.delete(userId);
 }
 
-// ─── Variable replacement ────────────────────────────────────────────────────
 function replaceVariables(text, contactData) {
   if (!text) return text;
   return text
@@ -246,9 +152,7 @@ function replaceVariables(text, contactData) {
     .replace(/\{telefono\}/gi, contactData.phone || '');
 }
 
-// ─── Smart activation checks ────────────────────────────────────────────────
 function isWithinActiveHours(config) {
-  // Get local time using the user's country timezone
   const COUNTRY_TZ = {
     PY: 'America/Asuncion', AR: 'America/Buenos_Aires', BR: 'America/Sao_Paulo',
     CL: 'America/Santiago', UY: 'America/Montevideo', CO: 'America/Bogota',
@@ -264,7 +168,6 @@ function isWithinActiveHours(config) {
     localHours = parseInt(parts.find(p => p.type === 'hour')?.value) || 0;
     localMinutes = parseInt(parts.find(p => p.type === 'minute')?.value) || 0;
   } catch {
-    // Fallback to UTC-3 (Paraguay summer)
     localHours = (now.getUTCHours() - 3 + 24) % 24;
     localMinutes = now.getUTCMinutes();
   }
@@ -278,7 +181,6 @@ function isWithinActiveHours(config) {
   if (startTime <= endTime) {
     return currentTime >= startTime && currentTime <= endTime;
   }
-  // Handles overnight range (e.g. 22:00 - 06:00)
   return currentTime >= startTime || currentTime <= endTime;
 }
 
@@ -306,186 +208,193 @@ function isActiveDay(config) {
 }
 
 async function isKnownContact(userId, phone) {
-  const result = await pg.query(
-    'SELECT id, nombre, sustantivo, grupo FROM contacts WHERE user_id = $1 AND phone = $2 LIMIT 1',
-    [userId, phone]
-  );
-  return result.rows[0] || null;
+  const snap = await db.collection(`users/${userId}/contacts`).doc(phone).get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  return { id: snap.id, nombre: data.nombre, sustantivo: data.tratamiento, grupo: data.grupo };
 }
 
 function isCooldownElapsed(conversation, cooldownMinutes) {
   if (!conversation || !conversation.last_response_at) return true;
-  const elapsed = Date.now() - new Date(conversation.last_response_at).getTime();
+  const lastTime = conversation.last_response_at.seconds
+    ? conversation.last_response_at.toMillis()
+    : new Date(conversation.last_response_at).getTime();
+  const elapsed = Date.now() - lastTime;
   return elapsed >= cooldownMinutes * 60_000;
 }
 
 function isHumanInterventionRecent(conversation) {
   if (!conversation || !conversation.last_human_intervention_at) return false;
-  const elapsed = Date.now() - new Date(conversation.last_human_intervention_at).getTime();
-  return elapsed < 30 * 60_000; // 30 minutes
+  const lastTime = conversation.last_human_intervention_at.seconds
+    ? conversation.last_human_intervention_at.toMillis()
+    : new Date(conversation.last_human_intervention_at).getTime();
+  const elapsed = Date.now() - lastTime;
+  return elapsed < 30 * 60_000;
 }
 
 function isMaxResponsesReached(conversation, maxResponses) {
   if (!conversation) return false;
-  // Reset counter if last response was on a different day
   if (conversation.last_response_at) {
-    const lastDate = new Date(conversation.last_response_at).toDateString();
+    const lastTime = conversation.last_response_at.seconds
+      ? conversation.last_response_at.toMillis()
+      : new Date(conversation.last_response_at).getTime();
+    const lastDate = new Date(lastTime).toDateString();
     const today = new Date().toDateString();
     if (lastDate !== today) return false;
   }
   return (conversation.responses_today || 0) >= maxResponses;
 }
 
-// ─── Conversation state management ──────────────────────────────────────────
 async function getOrCreateConversation(userId, contactPhone) {
-  const result = await pg.query(
-    'SELECT * FROM chatbot_conversations WHERE user_id = $1 AND contact_phone = $2 LIMIT 1',
-    [userId, contactPhone]
-  );
-  if (result.rows[0]) {
-    const conv = result.rows[0];
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  const snap = await ref.get();
 
-    // Reset responses_today if last_response_at is from a previous day
+  if (snap.exists) {
+    const conv = snap.data();
+    conv.id = snap.id;
     if (conv.last_response_at) {
-      const lastDate = new Date(conv.last_response_at).toDateString();
+      const lastTime = conv.last_response_at.seconds
+        ? conv.last_response_at.toMillis()
+        : new Date(conv.last_response_at).getTime();
+      const lastDate = new Date(lastTime).toDateString();
       const today = new Date().toDateString();
       if (lastDate !== today && conv.responses_today > 0) {
-        await pg.query(
-          'UPDATE chatbot_conversations SET responses_today = 0, updated_at = NOW() WHERE id = $1',
-          [conv.id]
-        );
+        await ref.update({ responses_today: 0, updatedAt: FieldValue.serverTimestamp() });
         conv.responses_today = 0;
       }
     }
-
     return conv;
   }
 
-  const insert = await pg.query(
-    `INSERT INTO chatbot_conversations (user_id, contact_phone, is_active)
-     VALUES ($1, $2, true)
-     ON CONFLICT (user_id, contact_phone) DO UPDATE
-       SET is_active = true, current_node_id = NULL, context = '{}',
-           responses_today = 0, updated_at = NOW()
-     RETURNING *`,
-    [userId, contactPhone]
-  );
-  return insert.rows[0];
+  await ref.set({
+    contactPhone,
+    isActive: true,
+    current_node_id: null,
+    context: {},
+    responses_today: 0,
+    last_response_at: null,
+    last_human_intervention_at: null,
+    bot_paused: false,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  const after = await ref.get();
+  return { id: after.id, ...after.data() };
 }
 
-async function updateConversationState(conversationId, nodeId, context) {
-  // Also reset responses_today if last_response_at was on a different day
-  await pg.query(
-    `UPDATE chatbot_conversations
-     SET current_node_id = $1,
-         context = COALESCE($2, context),
-         responses_today = CASE
-           WHEN last_response_at IS NULL OR DATE(last_response_at) < CURRENT_DATE
-           THEN 1
-           ELSE responses_today + 1
-         END,
-         last_response_at = NOW()
-     WHERE id = $3`,
-    [nodeId, context ? JSON.stringify(context) : null, conversationId]
-  );
+async function updateConversationState(userId, contactPhone, nodeId, context) {
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  const snap = await ref.get();
+  const conv = snap.data();
+  const lastDate = conv && conv.last_response_at
+    ? new Date(conv.last_response_at.seconds ? conv.last_response_at.toMillis() : new Date(conv.last_response_at).getTime()).toDateString()
+    : null;
+  const today = new Date().toDateString();
+  const resetCount = lastDate && lastDate !== today;
+
+  await ref.update({
+    current_node_id: nodeId,
+    context: context || FieldValue.delete(),
+    responses_today: resetCount ? 1 : FieldValue.increment(1),
+    last_response_at: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 async function deactivateConversation(userId, contactPhone) {
-  await pg.query(
-    `UPDATE chatbot_conversations SET is_active = false, updated_at = NOW()
-     WHERE user_id = $1 AND contact_phone = $2`,
-    [userId, contactPhone]
-  );
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  await ref.set({
+    contactPhone,
+    isActive: false,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
 }
 
 async function resetConversation(userId, contactPhone) {
-  await pg.query(
-    `UPDATE chatbot_conversations
-     SET current_node_id = NULL, context = '{}', responses_today = 0,
-         last_response_at = NULL, is_active = true, updated_at = NOW()
-     WHERE user_id = $1 AND contact_phone = $2`,
-    [userId, contactPhone]
-  );
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  await ref.update({
+    current_node_id: null,
+    context: FieldValue.delete(),
+    responses_today: 0,
+    last_response_at: null,
+    isActive: true,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 async function markHumanIntervention(userId, contactPhone) {
-  await pg.query(
-    `UPDATE chatbot_conversations
-     SET last_human_intervention_at = NOW(), updated_at = NOW()
-     WHERE user_id = $1 AND contact_phone = $2`,
-    [userId, contactPhone]
-  );
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  await ref.set({
+    contactPhone,
+    last_human_intervention_at: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
 }
 
-// ─── Bot pause/resume for inbox human intervention ──────────────────────────
 async function pauseBotForContact(userId, contactPhone) {
-  await ensureChatbotTables();
-  await pg.query(
-    `INSERT INTO chatbot_conversations (user_id, contact_phone, bot_paused, is_active)
-     VALUES ($1, $2, true, true)
-     ON CONFLICT (user_id, contact_phone) DO UPDATE
-       SET bot_paused = true, updated_at = NOW()`,
-    [userId, contactPhone]
-  );
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  await ref.set({
+    contactPhone,
+    bot_paused: true,
+    isActive: true,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
   logger.info({ userId, contactPhone }, 'Bot paused for contact');
 }
 
 async function resumeBotForContact(userId, contactPhone) {
-  await ensureChatbotTables();
-  await pg.query(
-    `UPDATE chatbot_conversations
-     SET bot_paused = false, last_human_intervention_at = NULL, updated_at = NOW()
-     WHERE user_id = $1 AND contact_phone = $2`,
-    [userId, contactPhone]
-  );
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  await ref.update({
+    bot_paused: false,
+    last_human_intervention_at: null,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
   logger.info({ userId, contactPhone }, 'Bot resumed for contact');
 }
 
 async function getBotStatusForContact(userId, contactPhone) {
-  await ensureChatbotTables();
-  const result = await pg.query(
-    `SELECT bot_paused, is_active, last_human_intervention_at, current_node_id
-     FROM chatbot_conversations
-     WHERE user_id = $1 AND contact_phone = $2 LIMIT 1`,
-    [userId, contactPhone]
-  );
-  const conv = result.rows[0];
+  const ref = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+  const snap = await ref.get();
+  const conv = snap.exists ? snap.data() : null;
   if (!conv) return { bot_paused: false, is_active: true, human_intervention: false };
 
   const humanRecent = conv.last_human_intervention_at
-    ? (Date.now() - new Date(conv.last_human_intervention_at).getTime()) < 30 * 60_000
+    ? (Date.now() - (conv.last_human_intervention_at.seconds ? conv.last_human_intervention_at.toMillis() : new Date(conv.last_human_intervention_at).getTime())) < 30 * 60_000
     : false;
 
   return {
     bot_paused: !!conv.bot_paused,
-    is_active: !!conv.is_active,
+    is_active: conv.isActive !== false,
     human_intervention: humanRecent,
-    current_node_id: conv.current_node_id,
+    current_node_id: conv.current_node_id || null,
   };
 }
 
-// ─── Message logging ─────────────────────────────────────────────────────────
 async function logMessage(userId, contactPhone, contactName, text, messageType, isFromContact, isBotReply, mediaUrl) {
   try {
-    // Skip logging protocol messages with no meaningful content
     const hasText = text !== undefined && text !== null && text !== '';
     const hasMedia = !!mediaUrl || (messageType && messageType !== 'text');
     if (!hasText && !hasMedia && !isBotReply) {
-      return; // Nothing meaningful to store
+      return;
     }
 
-    await pg.query(
-      `INSERT INTO incoming_messages
-       (user_id, contact_phone, contact_name, message_text, message_type, media_url, is_from_contact, is_bot_reply)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [userId, contactPhone, contactName || null, hasText ? text : null, messageType || 'text', mediaUrl || null, isFromContact, isBotReply]
-    );
+    await db.collection(`users/${userId}/inboxMessages`).add({
+      contactPhone,
+      contactName: contactName || null,
+      messageText: hasText ? text : null,
+      messageType: messageType || 'text',
+      mediaUrl: mediaUrl || null,
+      isFromContact,
+      isBotReply,
+      read: false,
+      createdAt: FieldValue.serverTimestamp(),
+    });
   } catch (err) {
     logger.error({ err: err?.message, userId, contactPhone }, 'Failed to log incoming message');
   }
 }
 
-// ─── Safety guardrails (injected into EVERY AI call, cannot be bypassed by prompt) ─
 const SAFETY_WRAPPER = `
 REGLAS DE SEGURIDAD OBLIGATORIAS (NUNCA ignorar, tienen prioridad absoluta):
 1. SOLO responde sobre el tema definido en el prompt del usuario. Si la pregunta no está relacionada, responde: "Disculpa, solo puedo asistirte con temas relacionados a nuestros servicios. ¿Hay algo en lo que pueda ayudarte dentro de mi área?"
@@ -499,18 +408,16 @@ REGLAS DE SEGURIDAD OBLIGATORIAS (NUNCA ignorar, tienen prioridad absoluta):
 PROMPT DEL NEGOCIO:
 `;
 
-// ─── AI API call ─────────────────────────────────────────────────────────────
 async function callAI(config, nodeContent, messageText, conversationContext) {
-  const apiKey = decrypt(config.ai_api_key_encrypted);
+  const apiKey = decrypt(config.aiApiKeyEncrypted || config.ai_api_key_encrypted);
   if (!apiKey) {
-    logger.warn({ userId: config.user_id }, 'AI API key not configured or decryption failed');
+    logger.warn({ userId: config.userId || config._userId }, 'AI API key not configured or decryption failed');
     return null;
   }
 
   const provider = config.ai_provider || 'openai';
   const model = config.ai_model || 'gpt-3.5-turbo';
   const userPrompt = nodeContent?.prompt || config.ai_system_prompt || 'Eres un asistente amable.';
-  // Wrap user's prompt with mandatory safety guardrails
   const systemPrompt = SAFETY_WRAPPER + userPrompt;
   const maxTokens = nodeContent?.max_tokens || 300;
 
@@ -589,12 +496,10 @@ async function callAI(config, nodeContent, messageText, conversationContext) {
   }
 }
 
-// ─── Find node by ID ─────────────────────────────────────────────────────────
 function findNode(nodes, nodeId) {
   return nodes.find(n => n.node_id === nodeId) || null;
 }
 
-// ─── Execute a node → returns { text, nextNodeId, mediaPayload } ─────────────
 async function executeNode(node, messageText, config, contactData, conversationContext) {
   if (!node) return { text: config.fallback_message, nextNodeId: null };
 
@@ -611,7 +516,6 @@ async function executeNode(node, messageText, config, contactData, conversationC
       const menuText = replaceVariables(content.text || '', contactData);
       const options = content.options || [];
 
-      // Build the menu display text with auto "Salir" option
       const exitOptionNum = options.length + 1;
       let menuDisplay = menuText + '\n';
       options.forEach((opt, idx) => {
@@ -622,7 +526,6 @@ async function executeNode(node, messageText, config, contactData, conversationC
       if (messageText) {
         const input = normalizeText(messageText);
 
-        // Check if user wants to exit (by number, keyword, or label)
         const exitKeywords = ['salir', 'exit', 'cancelar', 'no', 'chau', 'adios', 'bye', 'stop', 'parar'];
         if (input === String(exitOptionNum) || exitKeywords.includes(input)) {
           const exitMsg = config.exit_message || 'Has salido del menú. Escribe *menu* cuando quieras volver a empezar.';
@@ -633,7 +536,6 @@ async function executeNode(node, messageText, config, contactData, conversationC
           };
         }
 
-        // Try to match user input to a menu option by number or label (accent-insensitive)
         const match = options.find((opt, idx) => {
           const optNum = String(idx + 1);
           const optLabel = normalizeText(opt.label || '');
@@ -644,7 +546,6 @@ async function executeNode(node, messageText, config, contactData, conversationC
           return { text: null, nextNodeId: match.trigger || match.next || null };
         }
 
-        // No match found — use config fallback + re-display menu
         const fallback = config.fallback_message || 'No reconozco esa opción. Por favor elige un número del menú:';
         return {
           text: fallback + '\n\n' + menuDisplay,
@@ -653,7 +554,6 @@ async function executeNode(node, messageText, config, contactData, conversationC
         };
       }
 
-      // No user input — just show the menu (first time display)
       return { text: menuDisplay, nextNodeId: null, stayOnNode: true };
     }
 
@@ -663,7 +563,7 @@ async function executeNode(node, messageText, config, contactData, conversationC
         text: caption,
         nextNodeId: content.next || null,
         mediaPayload: {
-          type: content.type || 'image', // image, video, document
+          type: content.type || 'image',
           url: content.url,
         },
       };
@@ -695,47 +595,38 @@ async function executeNode(node, messageText, config, contactData, conversationC
   }
 }
 
-// ─── Get recent messages for AI conversation context ─────────────────────────
 async function getRecentMessages(userId, contactPhone, limit) {
   try {
-    const result = await pg.query(
-      `SELECT message_text, is_from_contact, created_at
-       FROM incoming_messages
-       WHERE user_id = $1 AND contact_phone = $2 AND message_text IS NOT NULL
-       ORDER BY created_at DESC
-       LIMIT $3`,
-      [userId, contactPhone, limit]
-    );
-    // Reverse so oldest first
-    return result.rows.reverse();
+    const snap = await db.collection(`users/${userId}/inboxMessages`)
+      .where('contactPhone', '==', contactPhone)
+      .where('messageText', '!=', null)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+    const msgs = [];
+    snap.forEach(d => {
+      const data = d.data();
+      msgs.push({
+        message_text: data.messageText,
+        is_from_contact: data.isFromContact,
+        created_at: data.createdAt ? data.createdAt.toDate() : new Date(),
+      });
+    });
+    return msgs.reverse();
   } catch (err) {
     logger.error({ err: err?.message, userId, contactPhone }, 'Failed to get recent messages');
     return [];
   }
 }
 
-// ─── MAIN: Handle incoming message ──────────────────────────────────────────
-/**
- * @param {string} userId - Bot owner's user ID
- * @param {object} messageInfo - { text, type, mediaUrl }
- * @param {string} contactPhone - Normalized phone of the sender
- * @param {string} contactName - Push name from WhatsApp
- * @param {Function} sendFn - async (jid, content) => {} — function to send replies
- * @returns {object|null} { responded: boolean, response?: string }
- */
-async function handleIncomingMessage(userId, messageInfo, contactPhone, contactName, sendFn) {
+async function handleIncomingMessage(userId, messageInfo, contactPhone, contactName) {
   try {
-    await ensureChatbotTables();
-
-    // 1. Get chatbot config
     const config = await getCachedConfig(userId);
     if (!config || !config.enabled) {
-      // Still log the message even if bot is disabled
       await logMessage(userId, contactPhone, contactName, messageInfo.text, messageInfo.type, true, false, messageInfo.mediaUrl);
       return { responded: false, reason: 'bot_disabled' };
     }
 
-    // 2. Smart activation checks
     if (!isActiveDay(config)) {
       await logMessage(userId, contactPhone, contactName, messageInfo.text, messageInfo.type, true, false, messageInfo.mediaUrl);
       return { responded: false, reason: 'inactive_day' };
@@ -746,7 +637,6 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       return { responded: false, reason: 'outside_hours' };
     }
 
-    // 3. Check if contact is known (if required)
     let contactData = { phone: contactPhone, nombre: contactName, sustantivo: '', grupo: '' };
     if (config.only_known_contacts) {
       const contact = await isKnownContact(userId, contactPhone);
@@ -757,35 +647,34 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       contactData = { phone: contactPhone, nombre: contact.nombre || contactName, sustantivo: contact.sustantivo || '', grupo: contact.grupo || '' };
     }
 
-    // 4. Log the incoming message
     await logMessage(userId, contactPhone, contactName, messageInfo.text, messageInfo.type, true, false, messageInfo.mediaUrl);
 
-    // 5. Get or create conversation
     const conversation = await getOrCreateConversation(userId, contactPhone);
 
-    // 6. Check deactivation keywords — ONLY when no active flow
-    // When in a flow (current_node_id set), let the menu handle "salir" as a friendly exit
     if (messageInfo.text && !conversation.current_node_id) {
       if (isDeactivationMessage(messageInfo.text, config)) {
         await deactivateConversation(userId, contactPhone);
         const deactivationMsg = config.deactivation_message || 'Un agente te atenderá pronto. Gracias por tu paciencia.';
-        const jid = `${contactPhone}@s.whatsapp.net`;
-        await sendFn(jid, { text: replaceVariables(deactivationMsg, contactData) });
+        const chatId = waha.toChatId(contactPhone);
+        await waha.sendText(chatId, replaceVariables(deactivationMsg, contactData));
         await logMessage(userId, contactPhone, contactName, deactivationMsg, 'text', false, true, null);
         return { responded: true, response: deactivationMsg, reason: 'deactivated_by_keyword' };
       }
     }
 
-    // 7. Check if conversation is active — reactivate if activation keyword
-    if (!conversation.is_active) {
+    if (!conversation.isActive) {
       if (messageInfo.text && isActivationMessage(messageInfo.text, config)) {
-        // Reactivate conversation on activation keyword
-        await pg.query(
-          `UPDATE chatbot_conversations SET is_active = true, current_node_id = NULL,
-           context = '{}', responses_today = 0, last_response_at = NULL, bot_paused = false, updated_at = NOW()
-           WHERE id = $1`, [conversation.id]
-        );
-        conversation.is_active = true;
+        const convRef = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+        await convRef.update({
+          isActive: true,
+          current_node_id: null,
+          context: FieldValue.delete(),
+          responses_today: 0,
+          last_response_at: null,
+          bot_paused: false,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        conversation.isActive = true;
         conversation.current_node_id = null;
         conversation.bot_paused = false;
         logger.info({ userId, contactPhone }, 'Conversation reactivated by activation keyword');
@@ -794,78 +683,64 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       }
     }
 
-    // 8. Check if bot is explicitly paused for this contact
     if (conversation.bot_paused) {
       return { responded: false, reason: 'bot_paused' };
     }
 
-    // 8b. Check human intervention (bot stays quiet for 30 min after owner manually replies)
     if (isHumanInterventionRecent(conversation)) {
       return { responded: false, reason: 'human_intervention' };
     }
 
-    // 9. Check cooldown — only for NEW conversations (no active flow node)
-    // If user is in the middle of a flow (has current_node_id), skip cooldown
     if (!conversation.current_node_id && !isCooldownElapsed(conversation, config.cooldown_minutes)) {
       return { responded: false, reason: 'cooldown' };
     }
 
-    // 10. Check max responses per day — only for new conversations (not mid-flow)
     if (!conversation.current_node_id && isMaxResponsesReached(conversation, config.max_responses_per_contact)) {
-      // Send a one-time message that an agent will attend
       if (conversation.responses_today === config.max_responses_per_contact) {
         const maxMsg = 'Un agente te atenderá pronto. Gracias por tu paciencia.';
-        const jid = `${contactPhone}@s.whatsapp.net`;
-        await sendFn(jid, { text: maxMsg });
+        const chatId = waha.toChatId(contactPhone);
+        await waha.sendText(chatId, maxMsg);
         await logMessage(userId, contactPhone, contactName, maxMsg, 'text', false, true, null);
-        // Increment to avoid sending this message again
-        await pg.query(
-          'UPDATE chatbot_conversations SET responses_today = responses_today + 1 WHERE id = $1',
-          [conversation.id]
-        );
+        const convRef = db.collection(`users/${userId}/chatbotConversations`).doc(contactPhone);
+        await convRef.update({ responses_today: FieldValue.increment(1) });
       }
       return { responded: false, reason: 'max_responses' };
     }
 
-    // 11. AI FULL MODE — all responses generated by AI, no nodes
-    // bot_mode 'ai' implies ai_enabled (don't require separate flag)
     if (config.bot_mode === 'ai') {
-      const jid = `${contactPhone}@s.whatsapp.net`;
+      const chatId = waha.toChatId(contactPhone);
 
-      // Check deactivation keywords in AI mode (since step 6 only checks when no current_node_id)
       if (messageInfo.text && conversation.current_node_id === 'ai_mode') {
         if (isDeactivationMessage(messageInfo.text, config)) {
           await deactivateConversation(userId, contactPhone);
           const deactivationMsg = config.deactivation_message || 'Un agente te atenderá pronto. Gracias por tu paciencia.';
-          await sendFn(jid, { text: replaceVariables(deactivationMsg, contactData) });
+          await waha.sendText(chatId, replaceVariables(deactivationMsg, contactData));
           await logMessage(userId, contactPhone, contactName, deactivationMsg, 'text', false, true, null);
           return { responded: true, response: deactivationMsg, reason: 'deactivated_by_keyword' };
         }
       }
 
-      // Check max responses for AI mode — use higher limit (AI conversations are naturally longer)
       const aiMaxResponses = Math.max(config.max_responses_per_contact || 5, 50);
       if (conversation.current_node_id === 'ai_mode' && conversation.responses_today >= aiMaxResponses) {
         const maxMsg = config.deactivation_message || 'Has alcanzado el límite de mensajes por hoy. Un agente te atenderá pronto.';
-        await sendFn(jid, { text: maxMsg });
+        await waha.sendText(chatId, maxMsg);
         await logMessage(userId, contactPhone, contactName, maxMsg, 'text', false, true, null);
         return { responded: false, reason: 'max_responses' };
       }
 
-      // Check if this is a new/reactivated conversation or a continuing AI conversation
       const isFirstMessage = !conversation.current_node_id && isActivationMessage(messageInfo.text, config);
       const isContinuingAI = conversation.current_node_id === 'ai_mode';
 
-      // Auto-expire AI conversations after 30 min of inactivity (saves tokens)
       if (isContinuingAI && conversation.last_response_at) {
-        const inactiveMs = Date.now() - new Date(conversation.last_response_at).getTime();
+        const lastTime = conversation.last_response_at.seconds
+          ? conversation.last_response_at.toMillis()
+          : new Date(conversation.last_response_at).getTime();
+        const inactiveMs = Date.now() - lastTime;
         if (inactiveMs > 30 * 60_000) {
-          // Session expired — reset, require activation keyword again
           await resetConversation(userId, contactPhone);
           if (!isActivationMessage(messageInfo.text, config)) {
             return { responded: false, reason: 'ai_session_expired' };
           }
-          // Treat as first message (fresh start)
           logger.info({ userId, contactPhone, inactiveMin: Math.round(inactiveMs / 60_000) }, 'AI session expired, starting fresh');
         }
       }
@@ -875,7 +750,6 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
         return { responded: false, reason: 'not_activation_keyword' };
       }
 
-      // Build conversation history — limit to last 6 messages to save tokens
       const recentMsgs = await getRecentMessages(userId, contactPhone, 7);
       if (recentMsgs.length > 0) {
         const last = recentMsgs[recentMsgs.length - 1];
@@ -888,7 +762,6 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
         content: m.message_text
       }));
 
-      // Call AI with system prompt + conversation history
       const aiResponse = await callAI(
         config,
         { prompt: config.ai_system_prompt, max_tokens: 300 },
@@ -900,25 +773,20 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       if (aiResponse) {
         responseText = aiResponse;
       } else {
-        // AI failed — send fallback
         const fallback = config.fallback_message || 'Lo siento, no pude procesar tu mensaje. Un agente te atenderá pronto.';
-        responseText = welcomePrefix ? welcomePrefix + '\n\n' + fallback : fallback;
+        responseText = fallback;
         logger.warn({ userId, contactPhone }, 'AI mode: AI call failed, using fallback');
       }
 
-      // Send response
       try {
-        await sendFn(jid, { text: responseText });
+        await waha.sendText(chatId, responseText);
         logger.info({ userId, contactPhone }, 'AI mode: reply sent successfully');
       } catch (sendErr) {
         logger.error({ err: sendErr?.message, userId, contactPhone }, 'AI mode: failed to send reply');
       }
 
-      // Log bot reply
       await logMessage(userId, contactPhone, contactName, responseText, 'text', false, true, null);
-
-      // Update conversation state (use 'ai_mode' as a marker node_id)
-      await updateConversationState(conversation.id, 'ai_mode', conversation.context);
+      await updateConversationState(userId, contactPhone, 'ai_mode', conversation.context);
 
       return {
         responded: true,
@@ -927,10 +795,8 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       };
     }
 
-    // 12. Get flow nodes (FLOW MODE)
-    const nodes = await getCachedNodes(config.id);
+    const nodes = await getCachedNodes(userId);
 
-    // 13. Determine response
     let currentNodeId = conversation.current_node_id;
     let responseText = null;
     let nextNodeId = null;
@@ -939,44 +805,35 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
     let shouldReset = false;
 
     if (!currentNodeId) {
-      // No active flow — check if message is an activation keyword
       if (!isActivationMessage(messageInfo.text, config)) {
         logger.info({ userId, contactPhone, text: messageInfo.text?.substring(0, 50) }, 'Message ignored — not an activation keyword');
         return { responded: false, reason: 'not_activation_keyword' };
       }
 
-      // First interaction — send welcome message + first node (e.g. menu)
       const welcomeText = config.welcome_message ? replaceVariables(config.welcome_message, contactData) : null;
 
-      // Find first node: use configured start_node_id, fallback to 'welcome'/'start'/first menu
       const firstNode = (config.start_node_id && findNode(nodes, config.start_node_id))
         || findNode(nodes, 'welcome') || findNode(nodes, 'start') || nodes.find(n => n.type === 'menu');
 
       if (firstNode) {
-        // Execute the first node to get its content (e.g. the menu text)
         const result = await executeNode(firstNode, null, config, contactData, conversation.context);
 
         if (welcomeText && result.text) {
-          // Combine welcome + first node text (e.g. greeting + menu)
           responseText = welcomeText + '\n\n' + result.text;
         } else {
           responseText = welcomeText || result.text;
         }
 
-        // Stay on the first node so the user can respond to it (e.g. pick menu option)
         nextNodeId = firstNode.node_id;
         mediaPayload = result.mediaPayload;
         shouldDeactivate = result.deactivate;
         shouldReset = result.resetConversation;
       } else {
-        // No nodes — just send welcome or fallback
         responseText = welcomeText || config.fallback_message;
       }
     } else {
-      // Continuing conversation — find current node and process input
       const currentNode = findNode(nodes, currentNodeId);
       if (!currentNode) {
-        // Node was deleted — reset
         responseText = config.fallback_message;
         nextNodeId = null;
       } else {
@@ -987,12 +844,10 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
         shouldDeactivate = result.deactivate;
         shouldReset = result.resetConversation;
 
-        // If we got a nextNodeId, execute that node too (for immediate transitions)
         if (nextNodeId && !result.stayOnNode) {
           const nextNode = findNode(nodes, nextNodeId);
           if (nextNode) {
             const nextResult = await executeNode(nextNode, null, config, contactData, conversation.context);
-            // Append or replace response
             if (nextResult.text) {
               responseText = responseText ? responseText + '\n\n' + nextResult.text : nextResult.text;
             }
@@ -1007,52 +862,43 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       }
     }
 
-    // 14. Send response
-    const jid = `${contactPhone}@s.whatsapp.net`;
+    const chatId = waha.toChatId(contactPhone);
 
     if (mediaPayload && mediaPayload.url) {
       try {
-        const mediaContent = {};
+        const file = { url: mediaPayload.url, mimetype: 'application/octet-stream', filename: mediaPayload.url.split('/').pop() || 'file' };
         if (mediaPayload.type === 'image') {
-          mediaContent.image = { url: mediaPayload.url };
-          if (responseText) mediaContent.caption = responseText;
+          await waha.sendImage(chatId, file, responseText || '');
         } else if (mediaPayload.type === 'video') {
-          mediaContent.video = { url: mediaPayload.url };
-          if (responseText) mediaContent.caption = responseText;
+          await waha.sendVideo(chatId, file, responseText || '', false);
         } else if (mediaPayload.type === 'document') {
-          mediaContent.document = { url: mediaPayload.url };
-          if (responseText) mediaContent.caption = responseText;
-          mediaContent.fileName = mediaPayload.url.split('/').pop() || 'document';
+          await waha.sendFile(chatId, file);
         }
-        await sendFn(jid, mediaContent);
       } catch (mediaErr) {
         logger.error({ err: mediaErr?.message, userId, contactPhone }, 'Failed to send media, falling back to text');
         if (responseText) {
-          await sendFn(jid, { text: responseText });
+          await waha.sendText(chatId, responseText);
         }
       }
     } else if (responseText) {
-      logger.info({ userId, contactPhone, jid, responseText: responseText?.substring(0, 80) }, 'Chatbot sending text reply');
       try {
-        await sendFn(jid, { text: responseText });
+        await waha.sendText(chatId, responseText);
         logger.info({ userId, contactPhone }, 'Chatbot reply sent successfully');
       } catch (sendErr) {
-        logger.error({ err: sendErr?.message, userId, contactPhone, jid }, 'Chatbot failed to send reply via WhatsApp');
+        logger.error({ err: sendErr?.message, userId, contactPhone }, 'Chatbot failed to send reply via WhatsApp');
       }
     }
 
-    // 15. Log bot reply
     if (responseText) {
       await logMessage(userId, contactPhone, contactName, responseText, 'text', false, true, null);
     }
 
-    // 16. Update conversation state
     if (shouldReset) {
       await resetConversation(userId, contactPhone);
     } else if (shouldDeactivate) {
       await deactivateConversation(userId, contactPhone);
     } else {
-      await updateConversationState(conversation.id, nextNodeId || currentNodeId, conversation.context);
+      await updateConversationState(userId, contactPhone, nextNodeId || currentNodeId, conversation.context);
     }
 
     return {
@@ -1061,18 +907,14 @@ async function handleIncomingMessage(userId, messageInfo, contactPhone, contactN
       nextNode: nextNodeId,
     };
   } catch (err) {
-    // NEVER crash the main app
     logger.error({ err: err?.message, stack: err?.stack, userId, contactPhone }, 'Chatbot engine error');
     return { responded: false, reason: 'error', error: err?.message };
   }
 }
 
-// ─── Record outgoing human message (for human intervention detection) ────────
 async function recordOutgoingMessage(userId, contactPhone, messageText) {
   try {
-    await ensureChatbotTables();
     await markHumanIntervention(userId, contactPhone);
-    // Auto-pause bot when owner sends a manual reply from inbox
     await pauseBotForContact(userId, contactPhone);
     await logMessage(userId, contactPhone, null, messageText, 'text', false, false, null);
   } catch (err) {

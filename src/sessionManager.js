@@ -1,37 +1,22 @@
-// src/sessionManager.js
 const { WhatsAppManager } = require('./manager');
-const path = require('path');
-const fs = require('fs').promises;
 const logger = require('./logger');
-const { withUserLock } = require('./redisLock');
-const owner = require('./owner');
 
 class SessionManager {
   constructor() {
-    this.sessions = new Map(); // userId -> WhatsAppManager instance
-    this.userSessions = new Map(); // Para mapear tokens a userIds
-    this.baseSessionPath = path.join(__dirname, '..', 'bot_sessions');
-    this.creatingSession = new Map(); // Para evitar creación concurrente
-    this.ownerIntervals = new Map(); // userId -> intervalId
+    this.sessions = new Map();
+    this.creatingSession = new Map();
   }
 
-  // Obtener o crear sesión para un usuario
   async getSession(userId) {
-    // Si ya existe la sesión, devolverla inmediatamente
     if (this.sessions.has(userId)) {
       return this.sessions.get(userId);
     }
-    
-    // Si ya se está creando esta sesión, esperar a que termine
     if (this.creatingSession.has(userId)) {
       await this.creatingSession.get(userId);
       return this.sessions.get(userId);
     }
-    
-    // Crear promesa para bloquear otras llamadas concurrentes
     const creationPromise = this.createSession(userId);
     this.creatingSession.set(userId, creationPromise);
-    
     try {
       await creationPromise;
       return this.sessions.get(userId);
@@ -39,69 +24,22 @@ class SessionManager {
       this.creatingSession.delete(userId);
     }
   }
-  
+
   async createSession(userId) {
-    const sessionPath = path.join(this.baseSessionPath, `user-${userId}`);
-    
-    // Crear directorio si no existe
-    await fs.mkdir(sessionPath, { recursive: true });
-    
     const manager = new WhatsAppManager(userId);
-    // Modificar la ruta de autenticación para este usuario específico
-    manager.authPath = sessionPath;
-    
-    // Inicializar la sesión de este usuario (aislado por lock por-usuario)
-    const store = (process.env.SESSION_STORE || 'file').toLowerCase();
-    if (store === 'redis') {
-      // Intentar ser owner; si otro pod ya lo es, no inicializamos aquí
-      const gotOwner = await owner.acquireOwner(userId, owner.getOwnerTtl());
-      if (!gotOwner) {
-        logger.info({ userId }, 'Otro pod es owner de la sesión; no inicializaré el socket');
-      } else {
-        this.startOwnerHeartbeat(userId);
-        await withUserLock(userId, async () => {
-          await manager.safeInitialize();
-        }, 45, { timeoutMs: 20000 });
-      }
-    } else {
-      await manager.safeInitialize();
-    }
-    
+    await manager.safeInitialize();
     this.sessions.set(userId, manager);
-    logger.info({ userId, sessionPath }, 'Nueva sesión creada para usuario');
+    logger.info({ userId }, 'Session created for user via WAHA');
   }
 
-  // Obtener sesión por token JWT (después de validar con Firebase Auth)
   async getSessionByToken(req) {
-    const userId = req.auth?.uid; // Desde Firebase Auth ID token
-    
-    logger.info('Getting session by token', {
-      userId,
-      userName: req.auth?.name || req.auth?.email,
-      email: req.auth?.email,
-      authPresent: !!req.auth,
-      availableFields: Object.keys(req.auth || {})
-    });
-    
+    const userId = req.auth?.uid;
     if (!userId) {
-      logger.error('Usuario no autenticado - no se encontró userId en token', {
-        auth: req.auth
-      });
       throw new Error('Usuario no autenticado');
     }
-    
-    const session = await this.getSession(userId);
-    
-    logger.info('Session obtained for user', {
-      userId,
-      sessionExists: !!session,
-      isReady: session?.getState()?.isReady
-    });
-    
-    return session;
+    return this.getSession(userId);
   }
 
-  // Listar sesiones activas
   getActiveSessions() {
     const active = [];
     for (const [userId, manager] of this.sessions) {
@@ -112,66 +50,36 @@ class SessionManager {
         connectionState: state.connectionState,
         userInfo: state.userInfo,
         lastActivity: state.lastActivity,
-        hasQR: state.hasQR
+        hasQR: state.hasQR,
       });
     }
     return active;
   }
 
-  // Cerrar sesión específica
   async closeSession(userId) {
     const manager = this.sessions.get(userId);
     if (manager) {
       try {
-        if (manager.sock) {
-          await manager.sock.logout();
-        }
+        manager.destroy();
         this.sessions.delete(userId);
-        await this.stopOwnerHeartbeat(userId);
-        await owner.releaseOwner(userId);
-        
-        // Limpiar datos de Redis (campañas, progreso, etc.)
         const { cleanupUserData } = require('./queueRedis');
         await cleanupUserData(userId);
-        
-        logger.info({ userId }, 'Sesión cerrada y datos de Redis limpiados para usuario');
+        logger.info({ userId }, 'Session closed');
       } catch (error) {
-        logger.error({ userId, error: error.message }, 'Error cerrando sesión');
+        logger.error({ userId, error: error.message }, 'Error closing session');
       }
     }
   }
 
-  // Inicializar una sesión específica (para cuando no hay conflictos)
   async initializeSession(userId) {
     const manager = this.sessions.get(userId);
-    if (manager && !manager.sock) {
-      try {
-        const store = (process.env.SESSION_STORE || 'file').toLowerCase();
-        if (store === 'redis') {
-          // Solo el owner puede inicializar
-          const ensured = await owner.tryEnsureOwnership(userId, owner.getOwnerTtl());
-          if (!ensured) {
-            logger.info({ userId }, 'No soy owner; omito initializeSession');
-            return false;
-          }
-          this.startOwnerHeartbeat(userId);
-          await withUserLock(userId, async () => {
-            await manager.safeInitialize();
-          }, 45, { timeoutMs: 20000 });
-        } else {
-          await manager.safeInitialize();
-        }
-        logger.info({ userId }, 'Sesión inicializada manualmente');
-        return true;
-      } catch (error) {
-        logger.error({ userId, error: error.message }, 'Error inicializando sesión');
-        return false;
-      }
+    if (manager) {
+      await manager.safeInitialize();
+      return true;
     }
     return false;
   }
 
-  // Obtener estadísticas generales
   getStats() {
     const sessions = this.getActiveSessions();
     return {
@@ -179,110 +87,51 @@ class SessionManager {
       readySessions: sessions.filter(s => s.isReady).length,
       connectingSessions: sessions.filter(s => s.connectionState === 'connecting').length,
       qrPendingSessions: sessions.filter(s => s.connectionState === 'qr_ready').length,
-      sessions: sessions
+      sessions,
     };
   }
 
-  // Limpiar sesiones inactivas (más de 24 horas sin actividad)
   cleanupInactiveSessions(maxInactiveHours = 24) {
     const now = Date.now();
     const maxInactiveMs = maxInactiveHours * 60 * 60 * 1000;
-    
     for (const [userId, manager] of this.sessions) {
       const state = manager.getState();
       if (now - state.lastActivity > maxInactiveMs) {
-        logger.info({ userId, hoursInactive: (now - state.lastActivity) / (60 * 60 * 1000) }, 'Cerrando sesión inactiva');
+        logger.info({ userId }, 'Closing inactive session');
         this.closeSession(userId);
       }
     }
   }
 
-  // Cerrar sesión de WhatsApp para un usuario específico
   async logoutUser(userId) {
     try {
-      logger.info(`Iniciando logout de WhatsApp para usuario: ${userId}`);
-      
       const manager = this.sessions.get(userId);
       if (!manager) {
-        logger.info(`No hay sesión activa para usuario: ${userId}`);
-        
-        // Aunque no haya sesión activa, limpiar datos de Redis por si acaso
         const { cleanupUserData } = require('./queueRedis');
         await cleanupUserData(userId);
-        
-        return { success: true, message: 'No había sesión activa, datos de Redis limpiados' };
+        return { success: true, message: 'No había sesión activa' };
       }
-
-      // Llamar al método logout del manager
       await manager.logout();
-      
-      // Remover la sesión del mapa
       this.sessions.delete(userId);
-      await this.stopOwnerHeartbeat(userId);
-      await owner.releaseOwner(userId);
-      
-      // Limpiar datos de Redis
       const { cleanupUserData } = require('./queueRedis');
       await cleanupUserData(userId);
-      
-      logger.info(`Logout completado y datos de Redis limpiados para usuario: ${userId}`);
-      return { success: true, message: 'Sesión de WhatsApp cerrada y datos limpiados exitosamente' };
-      
+      return { success: true, message: 'Sesión de WhatsApp cerrada exitosamente' };
     } catch (error) {
-      logger.error(`Error durante logout de usuario ${userId}: ${error.message}`, error);
-      
-      // Limpiar sesión aunque haya errores
+      logger.error({ userId, error: error.message }, 'Error during logout');
       if (this.sessions.has(userId)) {
-        try {
-          const manager = this.sessions.get(userId);
-          await manager.forceDisconnect();
-        } catch (forceError) {
-          logger.error(`Error en force disconnect: ${forceError.message}`);
-        }
+        const manager = this.sessions.get(userId);
+        await manager.forceCleanup();
         this.sessions.delete(userId);
       }
-      
-      // Intentar limpiar Redis de todas formas
-      try {
-        const { cleanupUserData } = require('./queueRedis');
-        await cleanupUserData(userId);
-      } catch (cleanupError) {
-        logger.error(`Error limpiando datos de Redis: ${cleanupError.message}`);
-      }
-      
       return { success: false, message: error.message };
     }
   }
 
-  // Logout por token JWT
   async logoutByToken(req) {
     const userId = req.auth?.uid;
-    
-    if (!userId) {
-      throw new Error('Usuario no autenticado');
-    }
-    
-    logger.info(`Logout solicitado por token para usuario: ${userId}`);
+    if (!userId) throw new Error('Usuario no autenticado');
     return await this.logoutUser(userId);
-  }
-
-  // Owner heartbeat management
-  startOwnerHeartbeat(userId) {
-    if (this.ownerIntervals.has(userId)) return;
-    const ttl = owner.getOwnerTtl();
-    const period = Math.max(5, Math.floor(ttl / 2));
-    const intId = setInterval(() => owner.renewOwner(userId, ttl).catch(()=>{}), period * 1000);
-    this.ownerIntervals.set(userId, intId);
-  }
-
-  async stopOwnerHeartbeat(userId) {
-    const intId = this.ownerIntervals.get(userId);
-    if (intId) {
-      clearInterval(intId);
-      this.ownerIntervals.delete(userId);
-    }
   }
 }
 
-// Singleton instance
 module.exports = new SessionManager();
