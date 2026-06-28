@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>WhatsApp Message Sender Pro</title>
   <meta name="description" content="Plataforma profesional para envío masivo de mensajes de WhatsApp">
-  
+
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2325D366'/><text x='50%' y='50%' text-anchor='middle' dy='.35em' font-size='50'>📱</text></svg>">
 
   <!-- Bootstrap + Icons -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css"/>
-  
+
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -45,7 +45,7 @@
         </div>
         <span class="brand-text">Monchito WA</span>
       </a>
-      
+
       <div class="navbar-nav ms-auto d-flex flex-row align-items-center">
         <!-- User Info -->
         <div id="user-info" class="user-info me-3 d-none">
@@ -62,13 +62,13 @@
             </button>
           </div>
         </div>
-        
+
         <!-- Connection Status -->
         <div id="connection-status" class="connection-status me-3">
           <div class="status-indicator"></div>
           <span class="status-text">Desconectado</span>
         </div>
-        
+
         <!-- Theme Toggle -->
         <div class="theme-toggle">
           <input type="checkbox" id="themeSwitch" class="theme-switch-checkbox">
@@ -154,7 +154,7 @@
               <div class="tab-description">Escanear código QR</div>
             </div>
           </button>
-          
+
           <button class="tab-nav-btn" data-tab="send" id="sendBtn">
             <div class="tab-icon">
               <i class="bi bi-send-fill"></i>
@@ -164,7 +164,7 @@
               <div class="tab-description" id="sendTabDescription">Configurar y enviar</div>
             </div>
           </button>
-          
+
           <button class="tab-nav-btn" data-tab="analytics" id="analyticsBtn">
             <div class="tab-icon">
               <i class="bi bi-bar-chart-fill"></i>
@@ -191,7 +191,7 @@
                 <p class="card-subtitle">Vincula tu cuenta de WhatsApp para comenzar</p>
               </div>
             </div>
-            
+
             <div class="card-body">
               <div id="qr-container" class="qr-section">
                 <div class="qr-instructions">
@@ -210,7 +210,7 @@
                     </div>
                   </div>
                 </div>
-                
+
                 <div class="qr-code-container">
                   <div class="qr-wrapper">
                     <img id="qrImage" alt="Código QR de WhatsApp" class="qr-image" loading="lazy">
@@ -218,7 +218,7 @@
                       <div class="qr-scanning-line"></div>
                     </div>
                   </div>
-                  
+
                   <div class="qr-actions">
                     <button id="refreshQrBtn" class="btn-refresh" onclick="refreshQR()">
                       <i class="bi bi-arrow-clockwise"></i>
@@ -238,11 +238,11 @@
                     <i class="bi bi-check-circle-fill"></i>
                   </div>
                 </div>
-                
+
                 <div class="connection-info">
                   <h4 class="connection-title">¡Conectado exitosamente!</h4>
                   <p class="connection-description" id="connectionDescription">Tu WhatsApp está vinculado y listo para enviar mensajes</p>
-                  
+
                   <div class="user-info-card">
                     <div class="user-avatar">
                       <i class="bi bi-person-circle"></i>
@@ -259,7 +259,7 @@
                     </div>
                   </div>
                 </div>
-                
+
                 <div class="next-steps">
                   <button class="btn-primary-action" onclick="showTab('send')">
                     <i class="bi bi-send-fill me-2"></i>
@@ -283,7 +283,7 @@
                 <p class="card-subtitle">Configura y envía mensajes masivos de forma controlada</p>
               </div>
             </div>
-            
+
             <div class="card-body">
               <form id="messageForm" enctype="multipart/form-data" class="message-form">
                 <!-- CSV Upload Section -->
@@ -302,7 +302,7 @@
                     <label for="campaignName" class="form-label">Nombre de campaña (opcional)</label>
                     <input type="text" id="campaignName" class="form-control" maxlength="120" placeholder="Ej: Promoción Febrero Premium">
                   </div>
-                  
+
                   <div class="file-upload-area">
                     <input type="file" id="csvFile" name="csvFile" class="file-input" accept=".csv,.txt,text/plain" required>
                     <label for="csvFile" class="file-upload-label">
@@ -315,7 +315,7 @@
                       </div>
                     </label>
                     <div class="file-info" id="csvFileInfo"></div>
-                    
+
                     <!-- Información sobre variables -->
                     <div class="csv-variables-info mt-3">
                       <div class="info-header">
@@ -327,22 +327,22 @@
                         <div class="csv-examples">
                           <div class="example">
                             <strong>Formato básico:</strong>
-                            <code>595992756462</code>
+                            <code>595972117231</code>
                             <small>→ Las variables se eliminarán del mensaje</small>
                           </div>
                           <div class="example">
                             <strong>Con tratamiento:</strong>
-                            <code>595992756462,Sr</code>
+                            <code>595972117231,Sr</code>
                             <small>→ Solo {tratamiento} será reemplazado</small>
                           </div>
                           <div class="example">
                             <strong>Con tratamiento y nombre:</strong>
-                            <code>595992756462,Sr,Andrés Vera</code>
+                            <code>595972117231,Sr,Andrés Vera</code>
                             <small>→ Ambas variables serán reemplazadas</small>
                           </div>
                           <div class="example">
                             <strong>Con grupo:</strong>
-                            <code>595992756462,Sr,Andrés Vera,Premium</code>
+                            <code>595972117231,Sr,Andrés Vera,Premium</code>
                             <small>→ También podrás usar {grupo}</small>
                           </div>
                         </div>
@@ -366,7 +366,7 @@
                       <p>Selecciona el formato del contenido a enviar</p>
                     </div>
                   </div>
-                  
+
                   <div class="message-type-grid">
                     <div class="message-type-option">
                       <input type="radio" id="type-text" name="messageType" value="none" checked>
@@ -380,7 +380,7 @@
                         </div>
                       </label>
                     </div>
-                    
+
                     <div class="message-type-option">
                       <input type="radio" id="type-single-image" name="messageType" value="single">
                       <label for="type-single-image" class="type-option-label">
@@ -393,7 +393,7 @@
                         </div>
                       </label>
                     </div>
-                    
+
                     <div class="message-type-option">
                       <input type="radio" id="type-multiple-images" name="messageType" value="multiple">
                       <label for="type-multiple-images" class="type-option-label">
@@ -406,7 +406,7 @@
                         </div>
                       </label>
                     </div>
-                    
+
                     <div class="message-type-option">
                       <input type="radio" id="type-audio" name="messageType" value="audio">
                       <label for="type-audio" class="type-option-label">
@@ -439,7 +439,7 @@
                       <div class="file-info" id="singleImageInfo"></div>
                     </div>
                   </div>
-                  
+
                   <div id="multipleImagesSection" class="media-section d-none">
                     <div class="file-upload-area media-upload">
                       <input type="file" id="images" name="images" class="file-input" accept="image/*" multiple>
@@ -455,7 +455,7 @@
                       <div class="file-info" id="multipleImagesInfo"></div>
                     </div>
                   </div>
-                  
+
                   <div id="audioSection" class="media-section d-none">
                     <div class="file-upload-area media-upload">
                       <input type="file" id="audioFile" name="audioFile" class="file-input" accept="audio/*">
@@ -484,7 +484,7 @@
                       <p>Configura uno o varios templates que se rotarán automáticamente</p>
                     </div>
                   </div>
-                  
+
                   <!-- Template Count Selector -->
                   <div class="template-count-selector">
                     <label for="templateCount">
@@ -503,12 +503,12 @@
                       <p>Los templates se rotarán automáticamente: Template 1 con línea 1 del CSV, Template 2 con línea 2, etc. Al llegar al último template, vuelve al primero.</p>
                     </div>
                   </div>
-                  
+
                   <!-- Templates Container (generated dynamically) -->
                   <div id="templatesContainer" class="templates-container">
                     <!-- Templates will be generated by JavaScript -->
                   </div>
-                  
+
                   <!-- Variables Helper (shared by all templates) -->
                   <div id="variablesHelper" class="variables-helper d-none">
                     <div class="variables-header">
@@ -535,7 +535,7 @@
                       </small>
                     </div>
                   </div>
-                  
+
                   <!-- Emoji Picker (shared by all templates) -->
                   <div id="emojiPicker" class="emoji-picker d-none">
                     <div class="emoji-picker-header">
@@ -587,7 +587,7 @@
                 <p class="card-subtitle">Seguimiento en tiempo real del estado de los mensajes</p>
               </div>
             </div>
-            
+
             <div class="card-body">
               <!-- Overall Progress -->
               <div class="overall-progress">
@@ -613,7 +613,7 @@
                     <div class="stat-label">Total</div>
                   </div>
                 </div>
-                
+
                 <div class="stat-card stat-sent">
                   <div class="stat-icon">
                     <i class="bi bi-check-circle-fill"></i>
@@ -623,7 +623,7 @@
                     <div class="stat-label">Enviados</div>
                   </div>
                 </div>
-                
+
                 <div class="stat-card stat-errors">
                   <div class="stat-icon">
                     <i class="bi bi-exclamation-triangle-fill"></i>
@@ -633,7 +633,7 @@
                     <div class="stat-label">Errores</div>
                   </div>
                 </div>
-                
+
                 <div class="stat-card stat-speed">
                   <div class="stat-icon">
                     <i class="bi bi-speedometer2"></i>
@@ -660,7 +660,7 @@
                     </button>
                   </div>
                 </div>
-                
+
                 <div class="table-wrapper">
                   <table class="status-table">
                     <thead>
@@ -741,7 +741,7 @@
                 <p class="card-subtitle">Métricas detalladas de rendimiento y uso</p>
               </div>
             </div>
-            
+
             <div class="card-body">
               <!-- Filtros mejorados -->
               <div class="analytics-filters-pro">
@@ -862,7 +862,7 @@
                   <h4><i class="bi bi-person-lines-fill me-2"></i>Gestión de Contactos</h4>
                   <span class="section-badge" id="contactsCountBadge">0 contactos</span>
                 </div>
-                
+
                 <!-- Add Contact Form -->
                 <form id="manualContactForm" class="contact-add-form">
                   <div class="form-row">
@@ -948,7 +948,7 @@
             <span class="brand-text">Monchito WA</span>
           </div>
           <p class="company-description">
-            Plataforma profesional para envío masivo de mensajes de WhatsApp. 
+            Plataforma profesional para envío masivo de mensajes de WhatsApp.
             Desarrollado por MindTechPy para optimizar tu comunicación empresarial.
           </p>
           <div class="company-website">
@@ -956,7 +956,7 @@
             <a href="https://mindtechpy.net" target="_blank" rel="noopener">mindtechpy.net</a>
           </div>
         </div>
-        
+
         <div class="footer-section contact-info">
           <h4 class="footer-title">Contacto</h4>
           <div class="contact-item">
@@ -965,14 +965,14 @@
           </div>
           <div class="contact-item">
             <i class="bi bi-telephone"></i>
-            <a href="tel:+595992756462">+595 992 756462</a>
+            <a href="tel:+595972117231">+595 992 756462</a>
           </div>
           <div class="contact-item">
             <i class="bi bi-whatsapp"></i>
-            <a href="https://wa.me/595992756462" target="_blank" rel="noopener">WhatsApp</a>
+            <a href="https://wa.me/595972117231" target="_blank" rel="noopener">WhatsApp</a>
           </div>
         </div>
-        
+
         <div class="footer-section social-info">
           <h4 class="footer-title">Síguenos</h4>
           <div class="social-links">
@@ -987,7 +987,7 @@
           </div>
         </div>
       </div>
-      
+
       <div class="footer-bottom">
         <div class="footer-copyright">
           <p>&copy; 2025 MindTechPy. Todos los derechos reservados.</p>

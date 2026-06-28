@@ -1,19 +1,97 @@
-'use strict';
+"use strict";
 
 const COUNTRY_CONFIGS = {
-  PY: { code: '595', name: 'Paraguay', localLength: 9, mobilePrefix: ['9'], totalLength: 12 },
-  AR: { code: '54', name: 'Argentina', localLength: 10, mobilePrefix: ['9'], totalLength: 12 },
-  BR: { code: '55', name: 'Brasil', localLength: 11, mobilePrefix: ['1', '2', '3', '4', '5', '6', '7', '8', '9'], totalLength: 13 },
-  CL: { code: '56', name: 'Chile', localLength: 9, mobilePrefix: ['9'], totalLength: 11 },
-  UY: { code: '598', name: 'Uruguay', localLength: 8, mobilePrefix: ['9'], totalLength: 11 },
-  CO: { code: '57', name: 'Colombia', localLength: 10, mobilePrefix: ['3'], totalLength: 12 },
-  PE: { code: '51', name: 'Perú', localLength: 9, mobilePrefix: ['9'], totalLength: 11 },
-  EC: { code: '593', name: 'Ecuador', localLength: 9, mobilePrefix: ['9'], totalLength: 12 },
-  BO: { code: '591', name: 'Bolivia', localLength: 8, mobilePrefix: ['6', '7'], totalLength: 11 },
-  VE: { code: '58', name: 'Venezuela', localLength: 10, mobilePrefix: ['4'], totalLength: 12 },
-  MX: { code: '52', name: 'México', localLength: 10, mobilePrefix: ['1', '2', '3', '4', '5', '6', '7', '8', '9'], totalLength: 12 },
-  US: { code: '1', name: 'Estados Unidos', localLength: 10, mobilePrefix: ['2', '3', '4', '5', '6', '7', '8', '9'], totalLength: 11 },
-  ES: { code: '34', name: 'España', localLength: 9, mobilePrefix: ['6', '7'], totalLength: 11 },
+  PY: {
+    code: "595",
+    name: "Paraguay",
+    localLength: 9,
+    mobilePrefix: ["9"],
+    totalLength: 12,
+  },
+  AR: {
+    code: "54",
+    name: "Argentina",
+    localLength: 10,
+    mobilePrefix: ["9"],
+    totalLength: 12,
+  },
+  BR: {
+    code: "55",
+    name: "Brasil",
+    localLength: 11,
+    mobilePrefix: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    totalLength: 13,
+  },
+  CL: {
+    code: "56",
+    name: "Chile",
+    localLength: 9,
+    mobilePrefix: ["9"],
+    totalLength: 11,
+  },
+  UY: {
+    code: "598",
+    name: "Uruguay",
+    localLength: 8,
+    mobilePrefix: ["9"],
+    totalLength: 11,
+  },
+  CO: {
+    code: "57",
+    name: "Colombia",
+    localLength: 10,
+    mobilePrefix: ["3"],
+    totalLength: 12,
+  },
+  PE: {
+    code: "51",
+    name: "Perú",
+    localLength: 9,
+    mobilePrefix: ["9"],
+    totalLength: 11,
+  },
+  EC: {
+    code: "593",
+    name: "Ecuador",
+    localLength: 9,
+    mobilePrefix: ["9"],
+    totalLength: 12,
+  },
+  BO: {
+    code: "591",
+    name: "Bolivia",
+    localLength: 8,
+    mobilePrefix: ["6", "7"],
+    totalLength: 11,
+  },
+  VE: {
+    code: "58",
+    name: "Venezuela",
+    localLength: 10,
+    mobilePrefix: ["4"],
+    totalLength: 12,
+  },
+  MX: {
+    code: "52",
+    name: "México",
+    localLength: 10,
+    mobilePrefix: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    totalLength: 12,
+  },
+  US: {
+    code: "1",
+    name: "Estados Unidos",
+    localLength: 10,
+    mobilePrefix: ["2", "3", "4", "5", "6", "7", "8", "9"],
+    totalLength: 11,
+  },
+  ES: {
+    code: "34",
+    name: "España",
+    localLength: 9,
+    mobilePrefix: ["6", "7"],
+    totalLength: 11,
+  },
 };
 
 /**
@@ -23,7 +101,7 @@ const COUNTRY_CONFIGS = {
  * @returns {{ normalized: string, valid: boolean, country: string }}
  */
 function normalizeNumber(rawNumber, countryCode) {
-  const result = { normalized: '', valid: false, country: countryCode || '' };
+  const result = { normalized: "", valid: false, country: countryCode || "" };
 
   if (!rawNumber || !countryCode) return result;
 
@@ -33,10 +111,12 @@ function normalizeNumber(rawNumber, countryCode) {
   result.country = countryCode.toUpperCase();
 
   // Clean: remove spaces, dashes, parentheses, dots
-  let cleaned = String(rawNumber).trim().replace(/[\s\-\(\)\.]/g, '');
+  let cleaned = String(rawNumber)
+    .trim()
+    .replace(/[\s\-\(\)\.]/g, "");
 
   // Remove leading +
-  if (cleaned.startsWith('+')) {
+  if (cleaned.startsWith("+")) {
     cleaned = cleaned.substring(1);
   }
 
@@ -49,7 +129,7 @@ function normalizeNumber(rawNumber, countryCode) {
   }
 
   // Remove leading 0 (common local format)
-  if (cleaned.startsWith('0')) {
+  if (cleaned.startsWith("0")) {
     const withoutZero = cleaned.substring(1);
     if (withoutZero.length === config.localLength) {
       cleaned = withoutZero;
@@ -68,7 +148,11 @@ function normalizeNumber(rawNumber, countryCode) {
   }
 
   // Check if it's already a fully qualified number with country code
-  if (/^\d+$/.test(cleaned) && cleaned.length === config.totalLength && cleaned.startsWith(config.code)) {
+  if (
+    /^\d+$/.test(cleaned) &&
+    cleaned.length === config.totalLength &&
+    cleaned.startsWith(config.code)
+  ) {
     const local = cleaned.substring(config.code.length);
     if (config.mobilePrefix.includes(local[0])) {
       result.normalized = cleaned;
@@ -87,7 +171,11 @@ function normalizeNumber(rawNumber, countryCode) {
 function getCountryConfigs() {
   const configs = {};
   for (const [key, val] of Object.entries(COUNTRY_CONFIGS)) {
-    configs[key] = { code: val.code, name: val.name, totalLength: val.totalLength };
+    configs[key] = {
+      code: val.code,
+      name: val.name,
+      totalLength: val.totalLength,
+    };
   }
   return configs;
 }
@@ -102,7 +190,7 @@ function detectCountryFromNumber(normalizedNumber) {
 
   // Sort by code length descending so longer codes match first (e.g. 598 before 59, 591 before 5)
   const sorted = Object.entries(COUNTRY_CONFIGS).sort(
-    (a, b) => b[1].code.length - a[1].code.length
+    (a, b) => b[1].code.length - a[1].code.length,
   );
 
   for (const [countryCode, config] of sorted) {
@@ -122,21 +210,21 @@ function detectCountryFromNumber(normalizedNumber) {
 
 /**
  * Format a phone number for display with spaces.
- * E.g. 595992756462 → +595 992 756 462
+ * E.g. 595972117231 → +595 992 756 462
  * @param {string} number - Normalized phone number (digits only)
  * @param {string} [countryCode] - Optional ISO 2-letter code; if omitted, tries detection
  * @returns {string} Formatted number or original if formatting fails
  */
 function formatPhoneDisplay(number, countryCode) {
-  if (!number) return '';
+  if (!number) return "";
 
   const cc = countryCode || detectCountryFromNumber(number);
-  if (!cc) return '+' + number;
+  if (!cc) return "+" + number;
 
   const config = COUNTRY_CONFIGS[cc];
-  if (!config) return '+' + number;
+  if (!config) return "+" + number;
 
-  if (!number.startsWith(config.code)) return '+' + number;
+  if (!number.startsWith(config.code)) return "+" + number;
 
   const local = number.substring(config.code.length);
 
@@ -151,7 +239,7 @@ function formatPhoneDisplay(number, countryCode) {
     groups.unshift(remaining);
   }
 
-  return '+' + config.code + ' ' + groups.join(' ');
+  return "+" + config.code + " " + groups.join(" ");
 }
 
 module.exports = {

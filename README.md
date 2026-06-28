@@ -5,6 +5,7 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 ## 🚀 Características Principales
 
 ### 📨 **Envío de Mensajes**
+
 - **Envío masivo** desde archivos CSV con orden preservado
 - **Importación de contactos desde CSV** con `nombre`, `tratamiento` y `grupo`
 - **Gestión manual de contactos** (alta/edición/eliminación)
@@ -16,6 +17,7 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 - **Limpieza automática** de archivos de audio después del envío
 
 ### 🤖 **Chatbot y Respuestas Automáticas**
+
 - **Editor visual de flujos** con nodos configurables (mensajes, preguntas, condiciones)
 - **Horarios inteligentes** de activación (días y horas configurables)
 - **Cooldown por contacto** para evitar envío excesivo
@@ -25,6 +27,7 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 - **Pausar/reanudar bot** por contacto individual desde la bandeja de entrada
 
 ### 📥 **Bandeja de Entrada (Inbox)**
+
 - **Visualización de mensajes entrantes** agrupados por contacto
 - **Respuestas directas** desde la interfaz web
 - **Contador de mensajes no leídos** con notificaciones
@@ -33,17 +36,20 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 - **Integración con chatbot**: pausar bot al responder manualmente
 
 ### 📊 **Campañas y Respuestas**
+
 - **Historial de campañas** con estadísticas detalladas
 - **Respuestas de campañas**: ver mensajes recibidos de contactos después del envío
 - **Intervalos de envío configurables** (3s, 5s, 8s, 12s, 15s)
 
 ### 🔑 **API Pública**
+
 - **API REST v1** con autenticación por API Key + Bearer token JWT
 - **Envío individual y masivo** programático
 - **Webhooks** para notificaciones de eventos (mensaje enviado, error, entregado, campaña completada)
 - **Documentación OpenAPI** integrada en el panel
 
 ### 🔧 **Arquitectura Técnica**
+
 - **Backend**: Node.js 20+ con Express
 - **WhatsApp Integration**: @whiskeysockets/baileys (socket-based)
 - **Base de datos**: PostgreSQL 16 con persistencia Longhorn (K8s)
@@ -55,6 +61,7 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 - **CI/CD**: GitHub Actions para deployment automático
 
 ### 🏢 **Multi-Cliente**
+
 - **Arquitectura de ramas**: Una rama por cliente (`cliente-3000`, `cliente-3011`, etc.)
 - **Configuración independiente**: Cada cliente con su `.env` y puerto específico
 - **Deployment aislado**: GitHub Actions deploy por rama automáticamente
@@ -70,6 +77,7 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 ## 🛠️ Instalación y Configuración
 
 ### 1. **Setup de Desarrollo**
+
 ```bash
 git clone https://github.com/poravv/message-sender.git
 cd message-sender
@@ -79,13 +87,14 @@ npm start
 ```
 
 ### 2. **Variables de Entorno (.env)**
+
 ```env
 # Servidor
 PORT=3000                # Desarrollo local (Kubernetes usa 3010)
 NODE_ENV=production
 
 # App
-AUTHORIZED_PHONES=595992756462,595976947110
+AUTHORIZED_PHONES=595972117231,595976947110
 FILE_RETENTION_HOURS=24
 MESSAGE_DELAY_MS=2000
 
@@ -129,12 +138,14 @@ MINIO_BUCKET=sender
 ## 🏗️ Deployment en Producción (Kubernetes)
 
 ### CI/CD
+
 - El workflow `.github/workflows/deploy.yml` compila y publica la imagen en GHCR y despliega en el clúster al hacer push a `main`.
 - Requiere un runner `self-hosted` con `docker` y `kubectl` configurado contra tu clúster.
 
 ### Manifests incluidos (namespace: `sender`)
+
 - `k8s/namespace.yaml` — crea el namespace `sender`.
-- `k8s/configmap.yaml` — configuración no sensible (PORT=3010 en K8s, TTLs, LOG_LEVEL, KEYCLOAK_* por defecto).
+- `k8s/configmap.yaml` — configuración no sensible (PORT=3010 en K8s, TTLs, LOG*LEVEL, KEYCLOAK*\* por defecto).
 - `k8s/postgresql.yaml` — PostgreSQL 16 con Longhorn PVC (5Gi), Secret e init SQL.
 - `k8s/backend-deployment.yaml` — Deployment/Service/HPA del backend.
   - Deployment: `sender-backend` (puerto contenedor 3010)
@@ -143,6 +154,7 @@ MINIO_BUCKET=sender
 - `k8s/ingress.yaml` — Ingress HTTPS para `sender.mindtechpy.net` (cert-manager `letsencrypt-prod`).
 
 ### Variables desde GitHub Secrets
+
 - Secret `backend-env-secrets` se recrea en cada deploy con tus Secrets:
   - `NODE_ENV`, `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_AUDIENCE`
   - `SESSION_STORE`, `AUTHORIZED_PHONES`, `FILE_RETENTION_HOURS`, `MESSAGE_DELAY_MS`, `LOG_LEVEL`
@@ -152,15 +164,19 @@ MINIO_BUCKET=sender
 - Asegúrate de definirlos en Settings → Secrets and variables → Actions.
 
 ### Puertos y acceso
+
 - Desarrollo local: `http://localhost:3000`
 - Kubernetes: Ingress en `https://sender.mindtechpy.net` → Service `sender-backend-service:3010`.
 
 ### PostgreSQL + Redis (almacenamiento híbrido)
+
 - **PostgreSQL**: Base de datos principal para contactos, campañas y métricas. Desplegado con Longhorn PVC para persistencia.
 - **Redis**: Sesiones de WhatsApp, cola BullMQ y caché. Externo (redis.mindtechpy.net).
 - El backend auto-selecciona PostgreSQL si `POSTGRES_HOST` está definido, sino usa Redis como fallback.
 - **Botón Limpiar Caché**: En el dashboard puedes limpiar el caché Redis de tu usuario (métricas, contactos temporales).
+
 ### Docker Compose (local)
+
 ```bash
 docker compose up -d
 open http://localhost:3000
@@ -169,6 +185,7 @@ open http://localhost:3000
 ## 📊 Características Funcionales
 
 ### **Gestión de Mensajes**
+
 - ✅ **CSV Processing**: Carga y valida números desde CSV
 - ✅ **Contact Management**: CRUD de contactos por usuario autenticado
 - ✅ **Campaign History**: Persistencia de campañas, destinatarios y resultados
@@ -179,6 +196,7 @@ open http://localhost:3000
 - ✅ **File Cleanup**: Eliminación automática de archivos temporales
 
 ### **Conexión WhatsApp**
+
 - ✅ **Baileys Integration**: Socket-based connection con Node.js 20
 - ✅ **Session Management**: Persistencia de sesiones en Redis (TTL configurable)
 - ✅ **QR Generation**: Generación automática de QR para autenticación
@@ -187,6 +205,7 @@ open http://localhost:3000
 - ✅ **Inactivity Management**: Desconexión automática después de 30 minutos
 
 ### **Frontend Interactivo**
+
 - ✅ **Responsive Design**: Bootstrap 5 con diseño mobile-first
 - ✅ **Emoji Picker**: 9 categorías de emojis con búsqueda
 - ✅ **Real-time Updates**: Polling cada 15 segundos para estado
@@ -204,16 +223,18 @@ open http://localhost:3000
 ## 📁 Estructura de Archivos CSV
 
 ### Formato básico (compatibilidad)
+
 ```csv
-595992756462
+595972117231
 595976947110
 595984123456
 ```
 
 ### Formato recomendado (con personalización)
+
 ```csv
 numero,tratamiento,nombre,grupo
-595992756462,Sr,Carlos Gómez,Premium
+595972117231,Sr,Carlos Gómez,Premium
 595976947110,Sra,Ana Benítez,Reactivacion
 595984123456,Dr,José Acosta,VIP
 ```
@@ -225,6 +246,7 @@ numero,tratamiento,nombre,grupo
 ## 📈 Gráficos en Markdown (Mermaid)
 
 ### Arquitectura funcional
+
 ```mermaid
 flowchart LR
   UI["Frontend (Firebase Auth + Dashboard)"] --> API["Express API"]
@@ -240,6 +262,7 @@ flowchart LR
 ```
 
 ### Flujo de campaña con tracking
+
 ```mermaid
 sequenceDiagram
   participant U as Usuario
@@ -261,6 +284,7 @@ sequenceDiagram
 ```
 
 ### Flujo de contactos (paginación + edición modal)
+
 ```mermaid
 sequenceDiagram
   participant U as Usuario
@@ -286,6 +310,7 @@ sequenceDiagram
 ```
 
 ### Ejemplo de distribución por grupo
+
 ```mermaid
 pie title Mensajes por grupo (ejemplo)
   "Premium" : 42
@@ -299,6 +324,7 @@ pie title Mensajes por grupo (ejemplo)
 ## 🔌 Endpoints Nuevos (resumen)
 
 ### Contactos
+
 - `POST /contacts` crear contacto manual
 - `GET /contacts/:contactId` obtener detalle de contacto
 - `PUT /contacts/:contactId` editar contacto
@@ -308,6 +334,7 @@ pie title Mensajes por grupo (ejemplo)
 - `GET /contacts/groups` listar grupos únicos
 
 ### Dashboard
+
 - `GET /dashboard/summary` resumen por rango
 - `GET /dashboard/timeline` línea de tiempo (`hour|day|month`)
 - `GET /dashboard/by-group` distribución por grupo
@@ -316,12 +343,14 @@ pie title Mensajes por grupo (ejemplo)
 - `GET /dashboard/monthly` tendencia mensual
 
 ### Campañas
+
 - `GET /campaigns` listar campañas con paginación y estadísticas
 - `GET /campaigns/:id` detalle de campaña
 - `GET /campaigns/:id/responses` respuestas de contactos a una campaña
 - `POST /cancel-campaign` cancelar campaña activa
 
 ### Chatbot
+
 - `GET /chatbot/config` obtener configuración del chatbot
 - `POST /chatbot/config` crear configuración del chatbot
 - `PUT /chatbot/config` actualizar configuración del chatbot
@@ -333,6 +362,7 @@ pie title Mensajes por grupo (ejemplo)
 - `DELETE /chatbot/conversations/:phone` reiniciar conversación
 
 ### Bandeja de Entrada
+
 - `GET /messages/inbox` listar conversaciones paginadas
 - `GET /messages/inbox/unread` conteo de conversaciones no leídas
 - `GET /messages/inbox/:phone` historial de mensajes con un contacto
@@ -343,25 +373,28 @@ pie title Mensajes por grupo (ejemplo)
 - `DELETE /messages/inbox/:phone` eliminar historial de chat
 
 ### Teléfono y País
+
 - `GET /phone/countries` listar países disponibles
 - `PUT /user/country` configurar país del usuario
 
 ### Cache
+
 - `DELETE /cache/user` limpiar caché Redis del usuario actual
 
 ## ⚡ Rendimiento y Límites
 
-| Tipo de Mensaje | Velocidad | Límite |
-|-----------------|-----------|---------|
-| Texto | ~500/10 segundos | WhatsApp API |
-| Imagen | ~500/8 minutos | Tamaño: 16MB |
-| Audio | ~300/10 minutos | Duración: 2min |
-| Reconexiones | 5 intentos | Backoff exponencial |
-| Reintentos | 3 por mensaje | Cola automática |
+| Tipo de Mensaje | Velocidad        | Límite              |
+| --------------- | ---------------- | ------------------- |
+| Texto           | ~500/10 segundos | WhatsApp API        |
+| Imagen          | ~500/8 minutos   | Tamaño: 16MB        |
+| Audio           | ~300/10 minutos  | Duración: 2min      |
+| Reconexiones    | 5 intentos       | Backoff exponencial |
+| Reintentos      | 3 por mensaje    | Cola automática     |
 
 ## 🔧 Monitoreo y Logs
 
 ### **Logs del Sistema**
+
 ```bash
 # Ver logs en tiempo real
 docker compose logs -f
@@ -374,6 +407,7 @@ docker compose logs audio-sender
 ```
 
 ### **Directorios Importantes**
+
 - 📁 `/uploads/`: Archivos temporales (auto-limpieza)
 - 📁 `/bot_sessions/`: Datos de sesión WhatsApp (persistente)
 - 📁 `/temp/`: Archivos de audio convertidos (auto-limpieza)
@@ -392,6 +426,7 @@ docker compose logs audio-sender
 ## 🐛 Solución de Problemas
 
 ### **Problemas de Conexión**
+
 ```bash
 # Verificar estado del contenedor
 docker compose ps
@@ -407,17 +442,19 @@ curl http://localhost:3000/connection-status
 ```
 
 ### **Problemas de Audio**
+
 - ✅ **Formatos soportados**: MP3, M4A, WAV, OGG
 - ✅ **Conversión automática**: A formato Opus para WhatsApp
 - ✅ **Limpieza automática**: Archivos eliminados después del envío
 - ❌ **Error común**: Verificar permisos de directorio `/temp/`
 
 ### **Problemas de Deployment**
+
 ```bash
 # Error: Directorio no existe
 # Solución: Ejecutar setup manual primero
 
-# Error: .env no encontrado  
+# Error: .env no encontrado
 # Solución: Crear .env con variables requeridas
 
 # Error: Puerto en uso
@@ -427,12 +464,14 @@ curl http://localhost:3000/connection-status
 ## 🔄 Mantenimiento
 
 ### **Tareas Regulares**
+
 - 📅 **Monitoring**: Verificar estado de contenedores diariamente
 - 🧹 **Cleanup**: Los archivos temporales se limpian automáticamente
 - 🔄 **Updates**: Deployment automático via GitHub Actions
 - 💾 **Backups**: Respaldar `/bot_sessions/` semanalmente
 
 ### **Comandos Útiles**
+
 ```bash
 # Estado de todos los clientes
 for dir in /home/elporavv/workspaceandre/clientes/*/message-sender; do
@@ -449,9 +488,9 @@ done
 
 ## 📞 Soporte
 
-**Desarrollado por**: Andrés Vera  
-**WhatsApp**: +595 992 756462  
-**Website**: mindtechpy.net  
+**Desarrollado por**: Andrés Vera
+**WhatsApp**: +595 992 756462
+**Website**: mindtechpy.net
 **GitHub**: poravv/message-sender
 
 ---

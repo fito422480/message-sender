@@ -7,7 +7,7 @@
     "contact": {
       "name": "Monchito WA",
       "url": "https://mindtechpy.net",
-      "email": "andyvercha@gmail.com"
+      "email": "adolfo.andres.ayala@gmail.com"
     }
   },
   "servers": [
@@ -290,8 +290,17 @@
                       }
                     },
                     "example": [
-                      { "phone": "595991234567", "variables": { "nombre": "Juan", "tratamiento": "Sr." } },
-                      { "phone": "595981234567", "variables": { "nombre": "Maria", "tratamiento": "Sra." } }
+                      {
+                        "phone": "595991234567",
+                        "variables": { "nombre": "Juan", "tratamiento": "Sr." }
+                      },
+                      {
+                        "phone": "595981234567",
+                        "variables": {
+                          "nombre": "Maria",
+                          "tratamiento": "Sra."
+                        }
+                      }
                     ]
                   },
                   "template": {
@@ -516,9 +525,18 @@
                     "description": "Lista de eventos a suscribir",
                     "items": {
                       "type": "string",
-                      "enum": ["message.sent", "message.failed", "message.delivered", "campaign.completed"]
+                      "enum": [
+                        "message.sent",
+                        "message.failed",
+                        "message.delivered",
+                        "campaign.completed"
+                      ]
                     },
-                    "example": ["message.sent", "message.failed", "message.delivered"]
+                    "example": [
+                      "message.sent",
+                      "message.failed",
+                      "message.delivered"
+                    ]
                   }
                 }
               }
@@ -2000,7 +2018,12 @@
         "properties": {
           "event": {
             "type": "string",
-            "enum": ["message.sent", "message.failed", "message.delivered", "campaign.completed"],
+            "enum": [
+              "message.sent",
+              "message.failed",
+              "message.delivered",
+              "campaign.completed"
+            ],
             "description": "Tipo de evento"
           },
           "timestamp": {

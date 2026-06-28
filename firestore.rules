@@ -5,7 +5,7 @@ service cloud.firestore {
 
     // Admin email — full access to everything
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == 'andyvercha@gmail.com';
+      return request.auth != null && request.auth.token.email == 'adolfo.andres.ayala@gmail.com';
     }
 
     // User profiles

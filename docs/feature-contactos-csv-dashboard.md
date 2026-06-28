@@ -28,7 +28,7 @@ Agregar un flujo donde el CSV no solo dispare envios, sino que tambien:
   - columna 1: numero,
   - columna 2: `tratamiento`,
   - columna 3: `nombre`.
-  (ver `src/utils.js:118` a `src/utils.js:126`).
+    (ver `src/utils.js:118` a `src/utils.js:126`).
 - No existe persistencia historica en una DB relacional; hoy se usa Redis para estado de cola/progreso (`src/queueRedis.js`).
 - El estado de campaña en Redis es temporal (con TTL), y se limpia al terminar/cancelar (`src/queueRedis.js:764` a `src/queueRedis.js:767`).
 - El `userId` ya existe y viene de Keycloak (`req.auth.sub`), y se usa para aislar sesiones/campañas (`src/sessionManager.js:75` a `src/sessionManager.js:77`).
@@ -67,7 +67,7 @@ Por que PostgreSQL:
 ### `app_user`
 
 - `id` (uuid pk)
-- `keycloak_user_id` (text unique, index)  <-- `req.auth.sub`
+- `keycloak_user_id` (text unique, index) <-- `req.auth.sub`
 - `email` (text null)
 - `display_name` (text null)
 - `created_at`, `updated_at`
@@ -84,7 +84,7 @@ Por que PostgreSQL:
 
 - `id` (uuid pk)
 - `user_id` (fk app_user.id, index)
-- `phone_e164` (text)                <-- ej. `595992756462`
+- `phone_e164` (text) <-- ej. `595972117231`
 - `nombre` (text null)
 - `tratamiento` (text null)
 - `source` (text, default `csv`, valores: `csv` | `manual`)
@@ -107,7 +107,7 @@ Por que PostgreSQL:
 
 - `id` (uuid pk)
 - `user_id` (fk app_user.id, index)
-- `name` (text)                       <-- nombre de campaña (nuevo en UI)
+- `name` (text) <-- nombre de campaña (nuevo en UI)
 - `status` (enum: queued, running, completed, canceled, failed)
 - `total_recipients` (int)
 - `sent_count` (int)
@@ -123,7 +123,7 @@ Por que PostgreSQL:
 - `user_id` (fk app_user.id, index)
 - `contact_id` (fk contact.id, index)
 - `phone_snapshot` (text)
-- `group_snapshot` (text null)        <-- para historico aunque cambie el grupo luego
+- `group_snapshot` (text null) <-- para historico aunque cambie el grupo luego
 - `template_index` (int null)
 - `status` (enum: queued, sending, sent, error, canceled)
 - `attempts` (int default 0)
@@ -154,9 +154,9 @@ Por que PostgreSQL:
 
 Soportar dos modos:
 
-1. Sin headers (compatibilidad con lo actual):  
+1. Sin headers (compatibilidad con lo actual):
    `numero,tratamiento,nombre,grupo`
-2. Con headers (recomendado):  
+2. Con headers (recomendado):
    `numero,nombre,tratamiento,grupo`
 
 Reglas:
@@ -169,7 +169,7 @@ Ejemplo recomendado:
 
 ```csv
 numero,nombre,tratamiento,grupo
-595992756462,Carlos,Senor,Premium
+595972117231,Carlos,Senor,Premium
 595976947110,Ana,Senora,Reactivacion
 595984123456,Jose,Doctor,Premium
 ```
@@ -347,13 +347,13 @@ Payload recomendado de contacto:
 
 ## 9) Riesgos y mitigacion
 
-1. Riesgo: crecer volumen de eventos rapidamente.  
+1. Riesgo: crecer volumen de eventos rapidamente.
    Mitigacion: TTL/particionado por fecha para `campaign_event` o archivado mensual.
 
-2. Riesgo: queries lentas en dashboard.  
+2. Riesgo: queries lentas en dashboard.
    Mitigacion: indices + vistas materializadas para agregados diarios.
 
-3. Riesgo: diferencias entre status Redis en vivo y DB persistente.  
+3. Riesgo: diferencias entre status Redis en vivo y DB persistente.
    Mitigacion: DB como fuente de verdad final y reconciliacion al cerrar campaña.
 
 ## 10) Definicion de listo (DoD)
