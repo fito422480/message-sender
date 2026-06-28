@@ -210,7 +210,7 @@ function detectCountryFromNumber(normalizedNumber) {
 
 /**
  * Format a phone number for display with spaces.
- * E.g. 595972117231 → +595 992 756 462
+ * E.g. 595972117231 → +595 972 117 231
  * @param {string} number - Normalized phone number (digits only)
  * @param {string} [countryCode] - Optional ISO 2-letter code; if omitted, tries detection
  * @returns {string} Formatted number or original if formatting fails

@@ -401,7 +401,7 @@ describe("phoneValidator", () => {
   describe("formatPhoneDisplay", () => {
     it("formats PY number with spaces", () => {
       const result = formatPhoneDisplay("595972117231", "PY");
-      expect(result).toBe("+595 992 756 462");
+      expect(result).toBe("+595 972 117 231");
     });
 
     it("formats US number with spaces", () => {
@@ -413,7 +413,7 @@ describe("phoneValidator", () => {
 
     it("auto-detects country if not provided", () => {
       const result = formatPhoneDisplay("595972117231");
-      expect(result).toBe("+595 992 756 462");
+      expect(result).toBe("+595 972 117 231");
     });
 
     it("returns empty string for null input", () => {
