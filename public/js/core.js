@@ -485,69 +485,64 @@ function setupMoreMenu() {
 
 // Tab Navigation
 function showTab(tabId) {
-  // Check plan restrictions for gated tabs
-  var gatedTabs = { inbox: 'inbox', chatbot: 'chatbot', campaigns: 'campaigns', api: 'api' };
-  if (gatedTabs[tabId] && window.planFeatures && window.planFeatures.features) {
-    if (!window.planFeatures.features[gatedTabs[tabId]]) {
-      showPlanUpgradeModal(gatedTabs[tabId], null, window.planFeatures.plan);
-      return;
-    }
-  }
+  // Plan restrictions removed: allow navigation to all tabs.
 
   // Determine if tab is in the dropdown
   var isDropdownTab = false;
-  var dropdownItem = document.querySelector('.tab-more-item[data-tab="' + tabId + '"]');
+  var dropdownItem = document.querySelector(
+    '.tab-more-item[data-tab="' + tabId + '"]',
+  );
   if (dropdownItem) {
     isDropdownTab = true;
   }
 
   // Update primary tab buttons
-  document.querySelectorAll('.tabs-nav > .tab-btn').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  document.querySelectorAll(".tabs-nav > .tab-btn").forEach(function (btn) {
+    btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
 
   // Update dropdown items
-  document.querySelectorAll('.tab-more-item').forEach(function(item) {
-    item.classList.toggle('active', item.dataset.tab === tabId);
+  document.querySelectorAll(".tab-more-item").forEach(function (item) {
+    item.classList.toggle("active", item.dataset.tab === tabId);
   });
 
   // Highlight the "Mas" trigger when a dropdown tab is active
-  var moreTrigger = document.getElementById('moreTabsBtn');
+  var moreTrigger = document.getElementById("moreTabsBtn");
   if (moreTrigger) {
-    moreTrigger.classList.toggle('active', isDropdownTab);
+    moreTrigger.classList.toggle("active", isDropdownTab);
   }
 
   // Update panes
-  document.querySelectorAll('.tab-pane').forEach(function(pane) {
-    pane.classList.toggle('active', pane.id === tabId);
+  document.querySelectorAll(".tab-pane").forEach(function (pane) {
+    pane.classList.toggle("active", pane.id === tabId);
   });
 
   // Update hash
-  history.replaceState(null, '', '#' + tabId);
+  history.replaceState(null, "", "#" + tabId);
 
   // Load tab content
-  if (tabId === 'dashboard' && typeof loadDashboard === 'function') {
+  if (tabId === "dashboard" && typeof loadDashboard === "function") {
     loadDashboard();
-  } else if (tabId === 'contacts' && typeof loadContacts === 'function') {
+  } else if (tabId === "contacts" && typeof loadContacts === "function") {
     loadContacts();
-  } else if (tabId === 'templates' && typeof loadTemplates === 'function') {
+  } else if (tabId === "templates" && typeof loadTemplates === "function") {
     loadTemplates();
-  } else if (tabId === 'plans' && typeof loadPlans === 'function') {
+  } else if (tabId === "plans" && typeof loadPlans === "function") {
     loadPlans();
-  } else if (tabId === 'api' && typeof loadApi === 'function') {
+  } else if (tabId === "api" && typeof loadApi === "function") {
     loadApi();
-  } else if (tabId === 'inbox' && typeof loadInbox === 'function') {
+  } else if (tabId === "inbox" && typeof loadInbox === "function") {
     loadInbox();
-  } else if (tabId === 'campaigns' && typeof loadCampaigns === 'function') {
+  } else if (tabId === "campaigns" && typeof loadCampaigns === "function") {
     loadCampaigns();
-  } else if (tabId === 'chatbot' && typeof loadChatbot === 'function') {
+  } else if (tabId === "chatbot" && typeof loadChatbot === "function") {
     loadChatbot();
-  } else if (tabId === 'admin' && typeof loadAdmin === 'function') {
+  } else if (tabId === "admin" && typeof loadAdmin === "function") {
     loadAdmin();
   }
 
   // Stop inbox polling when leaving inbox tab
-  if (tabId !== 'inbox' && typeof stopInboxPolling === 'function') {
+  if (tabId !== "inbox" && typeof stopInboxPolling === "function") {
     stopInboxPolling();
   }
 }
@@ -1233,86 +1228,44 @@ function loadPlanFeatures() {
 
 /**
  * Check if a boolean feature is available in the current plan.
+ * Frontend restriction removed: always allow.
  * @param {string} featureName - e.g. 'chatbot', 'inbox', 'api', 'campaigns'
  * @returns {boolean}
  */
 function checkFeature(featureName) {
-  if (!planFeatures || !planFeatures.features) return true; // fail open
-  return !!planFeatures.features[featureName];
+  return true;
 }
 
 /**
  * Check a numeric limit feature.
+ * Frontend restriction removed: always unlimited.
  * @param {string} limitName - e.g. 'send', 'contacts', 'templates'
  * @returns {{ limit: number, used: number, remaining: number, unlimited: boolean }}
  */
 function checkLimit(limitName) {
-  if (!planFeatures || !planFeatures.features) return { limit: -1, used: 0, remaining: -1, unlimited: true };
-  var limit = planFeatures.features[limitName];
-  var usageMap = { send: 'sendThisMonth', contacts: 'contactsTotal', templates: 'templatesTotal' };
-  var used = (planFeatures.usage && planFeatures.usage[usageMap[limitName]]) || 0;
-  if (limit === -1) return { limit: -1, used: used, remaining: -1, unlimited: true };
-  return { limit: limit, used: used, remaining: Math.max(0, limit - used), unlimited: false };
+  return { limit: -1, used: 0, remaining: -1, unlimited: true };
 }
 
 /**
- * Apply plan restrictions to the UI — hide/disable tabs and show lock icons.
+ * Apply plan restrictions to the UI.
+ * Restrictions removed: no tabs are locked and no lock icons are added.
  */
 function applyPlanRestrictions(data) {
-  if (!data || !data.features) return;
-  var features = data.features;
+  if (!data) return;
 
-  // Map tab IDs to feature names
-  var tabFeatureMap = {
-    'inbox': 'inbox',
-    'chatbot': 'chatbot',
-    'campaigns': 'campaigns',
-    'api': 'api'
-  };
+  // Keep the plan data available globally, but do not block the interface.
+  planFeatures = data;
+  window.planFeatures = data;
 
-  Object.keys(tabFeatureMap).forEach(function(tabId) {
-    var featureName = tabFeatureMap[tabId];
-    var isAvailable = !!features[featureName];
-
-    // Primary tab buttons
-    var tabBtn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
-    if (tabBtn) {
-      if (!isAvailable) {
-        tabBtn.classList.add('tab-locked');
-        // Add lock icon if not already present
-        if (!tabBtn.querySelector('.lock-icon')) {
-          var lock = document.createElement('i');
-          lock.className = 'bi bi-lock-fill lock-icon';
-          lock.style.cssText = 'font-size:0.65rem;margin-left:4px;opacity:0.6;';
-          tabBtn.appendChild(lock);
-        }
-      } else {
-        tabBtn.classList.remove('tab-locked');
-        var existingLock = tabBtn.querySelector('.lock-icon');
-        if (existingLock) existingLock.remove();
-      }
-    }
-
-    // Dropdown items
-    var dropdownItem = document.querySelector('.tab-more-item[data-tab="' + tabId + '"]');
-    if (dropdownItem) {
-      if (!isAvailable) {
-        dropdownItem.classList.add('tab-locked');
-        if (!dropdownItem.querySelector('.lock-icon')) {
-          var lock2 = document.createElement('i');
-          lock2.className = 'bi bi-lock-fill lock-icon';
-          lock2.style.cssText = 'font-size:0.65rem;margin-left:4px;opacity:0.6;';
-          dropdownItem.appendChild(lock2);
-        }
-      } else {
-        dropdownItem.classList.remove('tab-locked');
-        var existingLock2 = dropdownItem.querySelector('.lock-icon');
-        if (existingLock2) existingLock2.remove();
-      }
-    }
+  // Remove any lock icons/classes that may have been rendered before.
+  document.querySelectorAll(".tab-locked").forEach(function (el) {
+    el.classList.remove("tab-locked");
+  });
+  document.querySelectorAll(".lock-icon").forEach(function (el) {
+    el.remove();
   });
 
-  // Update plan badge with actual plan name
+  // Keep badge update only for display.
   updatePlanBadge(data.plan, data.role);
 }
 
@@ -1342,62 +1295,13 @@ function updatePlanBadge(plan, role) {
 
 /**
  * Show upgrade modal when a restricted feature is accessed.
+ * Popup removed: no modal is shown.
  */
 function showPlanUpgradeModal(feature, message, currentPlan) {
-  var existing = document.getElementById('plan-upgrade-modal');
-  if (existing) existing.remove();
-
-  var featureNames = {
-    chatbot: 'Chatbot',
-    chatbotAi: 'Chatbot con IA',
-    inbox: 'Bandeja de entrada',
-    api: 'API v1',
-    campaigns: 'Historial de campañas',
-    send: 'Envio de mensajes',
-    contacts: 'Contactos',
-    templates: 'Plantillas'
-  };
-
-  var featureLabel = featureNames[feature] || feature || 'esta funcion';
-  var displayMessage = message || ('La funcion "' + featureLabel + '" no esta disponible en tu plan actual.');
-
-  var planLabels = {
-    expired: 'Expirado',
-    trial: 'Prueba',
-    basico: 'Basico',
-    profesional: 'Profesional',
-    premium: 'Premium',
-    enterprise: 'Enterprise'
-  };
-
-  var currentPlanLabel = planLabels[currentPlan] || currentPlan || '';
-
-  var modal = document.createElement('div');
-  modal.id = 'plan-upgrade-modal';
-  modal.className = 'trial-modal-overlay';
-  modal.innerHTML =
-    '<div class="trial-modal-card" style="max-width: 440px;">' +
-      '<div class="trial-modal-icon"><i class="bi bi-lock-fill" style="color:#f59e0b;font-size:2.5rem;"></i></div>' +
-      '<h2>Funcion restringida</h2>' +
-      '<p>' + displayMessage + '</p>' +
-      (currentPlanLabel ? '<p style="font-size:0.85rem;color:var(--text-secondary);">Plan actual: <strong>' + currentPlanLabel + '</strong></p>' : '') +
-      '<div class="trial-modal-actions" style="display:flex;gap:0.5rem;justify-content:center;">' +
-        '<button class="btn-primary" id="upgradeGoPlansBtn">Ver planes</button>' +
-        '<button class="btn-primary" id="upgradeCloseBtn" style="background:var(--bg-tertiary,#242b33);color:var(--text-primary,#e7e9ea);">Cerrar</button>' +
-      '</div>' +
-    '</div>';
-
-  document.body.appendChild(modal);
-
-  document.getElementById('upgradeGoPlansBtn').addEventListener('click', function() {
-    var m = document.getElementById('plan-upgrade-modal');
-    if (m) m.remove();
-    showTab('plans');
-  });
-
-  document.getElementById('upgradeCloseBtn').addEventListener('click', function() {
-    var m = document.getElementById('plan-upgrade-modal');
-    if (m) m.remove();
+  console.warn("Funcion restringida ignorada:", {
+    feature: feature,
+    message: message,
+    currentPlan: currentPlan,
   });
 }
 
