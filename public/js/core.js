@@ -24,6 +24,73 @@ var firebaseConfigReady = fetch('/config/firebase')
 var currentUser = null;
 var pollingInterval = null;
 
+function getCurrentProfilePhotoUrl() {
+  var firebaseUser = null;
+  try {
+    firebaseUser = window.firebase && firebase.auth && firebase.auth().currentUser;
+  } catch (e) {
+    firebaseUser = null;
+  }
+  var user = currentUser || firebaseUser;
+  var profile = window.userProfile || userProfile;
+  var providerPhoto = null;
+
+  if (user && Array.isArray(user.providerData)) {
+    for (var i = 0; i < user.providerData.length; i++) {
+      if (user.providerData[i] && user.providerData[i].photoURL) {
+        providerPhoto = user.providerData[i].photoURL;
+        break;
+      }
+    }
+  }
+
+  return (user && user.photoURL) ||
+    (profile && profile.photoURL) ||
+    providerPhoto ||
+    (profile && profile.picture) ||
+    null;
+}
+
+function setAvatarImage(imgEl, iconEl, photoUrl) {
+  if (!imgEl) return;
+
+  if (photoUrl) {
+    imgEl.onload = function() {
+      imgEl.classList.remove('d-none');
+      if (iconEl) iconEl.classList.add('d-none');
+    };
+    imgEl.onerror = function() {
+      imgEl.removeAttribute('src');
+      imgEl.classList.add('d-none');
+      if (iconEl) iconEl.classList.remove('d-none');
+    };
+    imgEl.src = photoUrl;
+    imgEl.classList.remove('d-none');
+    if (iconEl) iconEl.classList.add('d-none');
+  } else {
+    imgEl.removeAttribute('src');
+    imgEl.classList.add('d-none');
+    if (iconEl) iconEl.classList.remove('d-none');
+  }
+}
+
+function syncProfileAvatar() {
+  var photoUrl = getCurrentProfilePhotoUrl();
+  setAvatarImage(
+    document.getElementById('profile-avatar-img'),
+    document.getElementById('profile-avatar-icon'),
+    photoUrl
+  );
+  if (typeof CustomEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('profile-avatar-updated', {
+      detail: { photoUrl: photoUrl }
+    }));
+  }
+}
+
+window.getCurrentProfilePhotoUrl = getCurrentProfilePhotoUrl;
+window.syncProfileAvatar = syncProfileAvatar;
+
 // API Base - authenticated fetch
 async function authFetch(url, options) {
   options = options || {};
@@ -270,6 +337,7 @@ function updateUserInfo() {
     if (userNameEl) userNameEl.textContent = name;
     if (userEmailEl) userEmailEl.textContent = email;
     if (userInfoEl) userInfoEl.classList.remove('d-none');
+    syncProfileAvatar();
   }
 }
 
@@ -576,6 +644,7 @@ function loadUserProfile() {
       userProfile = profile;
       window.userProfile = profile;
       updateTrialBadge(profile);
+      syncProfileAvatar();
       return profile;
     })
     .catch(function(err) {
@@ -1087,17 +1156,7 @@ function updateProfileDropdown() {
   // Avatar photo
   var avatarImg = document.getElementById('profile-avatar-img');
   var avatarIcon = document.getElementById('profile-avatar-icon');
-  var photoUrl = (user && user.photoURL) || (profile && profile.photoURL);
-  if (avatarImg && avatarIcon) {
-    if (photoUrl) {
-      avatarImg.src = photoUrl;
-      avatarImg.classList.remove('d-none');
-      avatarIcon.classList.add('d-none');
-    } else {
-      avatarImg.classList.add('d-none');
-      avatarIcon.classList.remove('d-none');
-    }
-  }
+  setAvatarImage(avatarImg, avatarIcon, getCurrentProfilePhotoUrl());
 
   // Country
   var country = ensureUserProfileCountry(profile && profile.country);

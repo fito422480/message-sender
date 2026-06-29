@@ -52,7 +52,10 @@
       </div>
       <nav class="v2-sidebar-nav">${buildNavHtml()}</nav>
       <div class="v2-sidebar-footer">
-        <i class="bi bi-person-circle" style="font-size:1.5rem;color:var(--text-muted);flex-shrink:0"></i>
+        <div class="v2-avatar v2-footer-avatar">
+          <img id="v2-footer-avatar-img" class="v2-avatar-img d-none" src="" alt="Avatar">
+          <i id="v2-footer-avatar-icon" class="bi bi-person-circle"></i>
+        </div>
         <div class="v2-sidebar-footer-info">
           <div class="v2-sidebar-footer-name" id="v2-footer-name">Usuario</div>
           <div class="v2-sidebar-footer-plan" id="v2-footer-plan">—</div>
@@ -71,15 +74,26 @@
       </button>
       <div class="v2-user-menu">
         <button class="v2-user-chip" id="v2-user-chip" title="Perfil">
-          <i class="bi bi-person-circle"></i>
+          <span class="v2-avatar v2-chip-avatar">
+            <img id="v2-chip-avatar-img" class="v2-avatar-img d-none" src="" alt="Avatar">
+            <i id="v2-chip-avatar-icon" class="bi bi-person-circle"></i>
+          </span>
           <span id="v2-chip-name">Usuario</span>
           <i class="bi bi-chevron-down" style="font-size:.65rem;margin-left:2px"></i>
         </button>
         <div id="v2-user-dropdown">
           <div class="v2-dropdown-header">
-            <div class="v2-dropdown-name" id="v2-dd-name">Usuario</div>
-            <div class="v2-dropdown-email" id="v2-dd-email"></div>
-            <span class="v2-dropdown-plan" id="v2-dd-plan">—</span>
+            <div class="v2-dropdown-user-row">
+              <div class="v2-avatar v2-dropdown-avatar">
+                <img id="v2-dd-avatar-img" class="v2-avatar-img d-none" src="" alt="Avatar">
+                <i id="v2-dd-avatar-icon" class="bi bi-person-circle"></i>
+              </div>
+              <div class="v2-dropdown-user-info">
+                <div class="v2-dropdown-name" id="v2-dd-name">Usuario</div>
+                <div class="v2-dropdown-email" id="v2-dd-email"></div>
+                <span class="v2-dropdown-plan" id="v2-dd-plan">—</span>
+              </div>
+            </div>
           </div>
           <button class="v2-dropdown-item" id="v2-dd-country">
             <i class="bi bi-globe2"></i> Cambiar país
@@ -190,14 +204,71 @@
     syncActiveTab();
 
     // Sync user info (name populated async by main.js)
+    function getPhotoUrl() {
+      if (typeof window.getCurrentProfilePhotoUrl === "function") {
+        return window.getCurrentProfilePhotoUrl();
+      }
+      const legacyImg = document.getElementById("profile-avatar-img");
+      return legacyImg && !legacyImg.classList.contains("d-none")
+        ? legacyImg.getAttribute("src")
+        : null;
+    }
+
+    function setAvatar(img, icon, photoUrl) {
+      if (!img) return;
+      if (photoUrl) {
+        img.onload = () => {
+          img.classList.remove("d-none");
+          if (icon) icon.classList.add("d-none");
+        };
+        img.onerror = () => {
+          img.removeAttribute("src");
+          img.classList.add("d-none");
+          if (icon) icon.classList.remove("d-none");
+        };
+        img.src = photoUrl;
+        img.classList.remove("d-none");
+        if (icon) icon.classList.add("d-none");
+      } else {
+        img.removeAttribute("src");
+        img.classList.add("d-none");
+        if (icon) icon.classList.remove("d-none");
+      }
+    }
+
+    function syncUserAvatar(photoUrl) {
+      const url = photoUrl || getPhotoUrl();
+      [
+        ["v2-footer-avatar-img", "v2-footer-avatar-icon"],
+        ["v2-chip-avatar-img", "v2-chip-avatar-icon"],
+        ["v2-dd-avatar-img", "v2-dd-avatar-icon"],
+      ].forEach(([imgId, iconId]) => {
+        setAvatar(
+          document.getElementById(imgId),
+          document.getElementById(iconId),
+          url,
+        );
+      });
+    }
+
     function syncUserInfo() {
-      const name = document.getElementById("user-name")?.textContent.trim();
-      const email = document
-        .getElementById("profile-display-email")
-        ?.textContent.trim();
-      const plan = document
-        .getElementById("profile-plan-badge")
-        ?.textContent.trim();
+      const profile = window.userProfile || {};
+      const user = window.currentUser || {};
+      const name =
+        document.getElementById("user-name")?.textContent.trim() ||
+        user.displayName ||
+        profile.displayName ||
+        profile.name ||
+        user.email ||
+        "Usuario";
+      const email =
+        document.getElementById("profile-display-email")?.textContent.trim() ||
+        user.email ||
+        profile.email ||
+        "";
+      const plan =
+        document.getElementById("profile-plan-badge")?.textContent.trim() ||
+        (profile.role === "admin" ? "Admin" : profile.plan ? "Acceso activo" : "");
       if (name) {
         document.getElementById("v2-footer-name").textContent = name;
         document.getElementById("v2-chip-name").textContent = name;
@@ -208,6 +279,7 @@
         document.getElementById("v2-footer-plan").textContent = plan;
         document.getElementById("v2-dd-plan").textContent = plan;
       }
+      syncUserAvatar();
     }
     const userInfoEl = document.getElementById("user-info");
     if (userInfoEl)
@@ -215,7 +287,12 @@
         subtree: true,
         childList: true,
         characterData: true,
+        attributes: true,
+        attributeFilter: ["class", "src"],
       });
+    window.addEventListener("profile-avatar-updated", (event) => {
+      syncUserAvatar(event.detail?.photoUrl);
+    });
     syncUserInfo();
     // Retry after auth settles
     setTimeout(syncUserInfo, 2000);
