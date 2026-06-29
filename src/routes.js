@@ -865,23 +865,23 @@ function buildRoutes() {
     }
   });
 
+  function setQrResponseHeaders(res) {
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+  }
+
   async function serveQrForUser(userId, res, manager = null) {
     const qrManager = manager || sessionManager.sessions?.get?.(userId);
-    if (qrManager?.qrCode) {
-      const base64Data = qrManager.qrCode.replace(/^data:image\/png;base64,/, '');
-      const buf = Buffer.from(base64Data, 'base64');
-      res.set('Content-Type', 'image/png');
-      return res.send(buf);
-    }
-
-    // Fallback: try to fetch QR directly from WAHA
     if (qrManager) {
       try {
-        const qrBase64 = await qrManager.getQrBase64();
+        const qrBase64 = await qrManager.getQrBase64({ maxAgeMs: 2000 });
         if (qrBase64) {
           const base64Data = qrBase64.replace(/^data:image\/png;base64,/, '');
           const buf = Buffer.from(base64Data, 'base64');
-          res.set('Content-Type', 'image/png');
+          setQrResponseHeaders(res);
           return res.send(buf);
         }
       } catch {}
@@ -986,6 +986,7 @@ function buildRoutes() {
       // Force clean re-initialize to get a new QR
       await whatsappManager.cleanInitialize();
       qrRefreshInProgress.delete(userId);
+      res.set('Cache-Control', 'no-store');
       return res.json({ success: true, message: 'Solicitando nuevo código QR...', qrUrl: '/qr' });
     } catch (e) {
       const userId = req.auth?.uid;

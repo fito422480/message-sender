@@ -208,10 +208,30 @@ function isActiveDay(config) {
 }
 
 async function isKnownContact(userId, phone) {
-  const snap = await db.collection(`users/${userId}/contacts`).doc(phone).get();
-  if (!snap.exists) return null;
-  const data = snap.data();
-  return { id: snap.id, nombre: data.nombre, sustantivo: data.tratamiento, grupo: data.grupo };
+  const contacts = db.collection(`users/${userId}/contacts`);
+  const normalizedPhone = String(phone || '').trim();
+  const snap = await contacts.doc(normalizedPhone).get();
+  if (snap.exists) return mapKnownContact(snap.id, snap.data());
+
+  const phoneFields = ['phone', 'numero', 'number', 'telefono', 'celular'];
+  for (const field of phoneFields) {
+    const byField = await contacts.where(field, '==', normalizedPhone).limit(1).get();
+    if (!byField.empty) {
+      const doc = byField.docs[0];
+      return mapKnownContact(doc.id, doc.data());
+    }
+  }
+
+  return null;
+}
+
+function mapKnownContact(id, data) {
+  return {
+    id,
+    nombre: data.nombre || data.name || null,
+    sustantivo: data.tratamiento || data.sustantivo || data.titulo || '',
+    grupo: data.grupo || data.group || '',
+  };
 }
 
 function isCooldownElapsed(conversation, cooldownMinutes) {

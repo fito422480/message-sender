@@ -16,9 +16,21 @@ const contactStatsCol = (uid) => db.collection(`users/${uid}/contactStats`);
 // ========================================
 
 async function getContactByPhone(userId, phone) {
-  const snap = await contactsCol(userId).doc(String(phone).trim()).get();
-  if (!snap.exists) return null;
-  return mapContact(snap.id, snap.data());
+  const normalizedPhone = String(phone || '').trim();
+  const col = contactsCol(userId);
+  const snap = await col.doc(normalizedPhone).get();
+  if (snap.exists) return mapContact(snap.id, snap.data());
+
+  const phoneFields = ['phone', 'numero', 'number', 'telefono', 'celular'];
+  for (const field of phoneFields) {
+    const byField = await col.where(field, '==', normalizedPhone).limit(1).get();
+    if (!byField.empty) {
+      const doc = byField.docs[0];
+      return mapContact(doc.id, doc.data());
+    }
+  }
+
+  return null;
 }
 
 async function getContactById(userId, contactId) {
@@ -117,29 +129,31 @@ async function listContacts(userId, opts = {}) {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.max(1, Math.min(200, Number(opts.pageSize) || 25));
 
-  let query = contactsCol(userId);
-
-  if (group) {
-    query = query.where('grupo', '==', group);
-  }
-
-  const snap = await query.get();
+  const snap = await contactsCol(userId).get();
   let docs = [];
   snap.forEach(d => docs.push(d));
 
   docs.sort((a, b) => {
-    const aUp = a.data().updatedAt?.toMillis() || 0;
-    const bUp = b.data().updatedAt?.toMillis() || 0;
+    const aUp = toMillis(a.data().updatedAt) || 0;
+    const bUp = toMillis(b.data().updatedAt) || 0;
     return bUp - aUp;
   });
 
   if (search) {
     docs = docs.filter(d => {
-      const data = d.data();
-      const phone = (data.phone || '').toLowerCase();
-      const nombre = (data.nombre || '').toLowerCase();
-      const grupo = (data.grupo || '').toLowerCase();
+      const contact = mapContact(d.id, d.data());
+      const phone = String(contact.phone || '').toLowerCase();
+      const nombre = String(contact.nombre || '').toLowerCase();
+      const grupo = String(contact.grupo || '').toLowerCase();
       return phone.includes(search) || nombre.includes(search) || grupo.includes(search);
+    });
+  }
+
+  if (group) {
+    const normalizedGroup = group.toLowerCase();
+    docs = docs.filter(d => {
+      const contact = mapContact(d.id, d.data());
+      return String(contact.grupo || '').trim().toLowerCase() === normalizedGroup;
     });
   }
 
@@ -155,8 +169,9 @@ async function getContactGroups(userId) {
   const snap = await contactsCol(userId).get();
   const groups = new Set();
   snap.forEach(d => {
-    const g = d.data().grupo;
-    if (g && g.trim()) groups.add(g);
+    const data = d.data();
+    const g = data.grupo || data.group;
+    if (g && String(g).trim()) groups.add(String(g).trim());
   });
   return [...groups].sort();
 }
@@ -172,11 +187,17 @@ async function getContactsByIds(userId, contactIds) {
 }
 
 async function getContactsByGroup(userId, groupName) {
-  const snap = await contactsCol(userId)
-    .where('grupo', '==', String(groupName || ''))
-    .get();
+  const targetGroup = String(groupName || '').trim().toLowerCase();
+  if (!targetGroup) return [];
+
+  const snap = await contactsCol(userId).get();
   const results = [];
-  snap.forEach(d => results.push(mapContact(d.id, d.data())));
+  snap.forEach(d => {
+    const contact = mapContact(d.id, d.data());
+    if (String(contact.grupo || '').trim().toLowerCase() === targetGroup) {
+      results.push(contact);
+    }
+  });
   return results;
 }
 
@@ -739,17 +760,27 @@ function parseRange(from, to) {
 
 function mapContact(id, data) {
   if (!data) return null;
+  const phone = data.phone || data.numero || data.number || data.telefono || data.celular || id;
   return {
     id,
-    phone: data.phone,
-    nombre: data.nombre,
-    tratamiento: data.tratamiento,
-    grupo: data.grupo,
-    source: data.source,
-    createdAt: data.createdAt ? data.createdAt.toMillis() : null,
-    updatedAt: data.updatedAt ? data.updatedAt.toMillis() : null,
-    lastSeenAt: data.lastSeenAt ? data.lastSeenAt.toMillis() : null,
+    phone,
+    nombre: data.nombre || data.name || data.nombreCompleto || null,
+    tratamiento: data.tratamiento || data.sustantivo || data.titulo || null,
+    grupo: data.grupo || data.group || null,
+    source: data.source || 'firebase',
+    createdAt: toMillis(data.createdAt),
+    updatedAt: toMillis(data.updatedAt),
+    lastSeenAt: toMillis(data.lastSeenAt),
   };
+}
+
+function toMillis(value) {
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.toDate === 'function') return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  const ts = Number(new Date(value).getTime());
+  return Number.isFinite(ts) ? ts : null;
 }
 
 function mapCampaign(id, data) {

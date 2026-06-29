@@ -223,8 +223,11 @@ class WhatsAppManager {
     }
   }
 
-  async getQrBase64() {
-    if (!this.qrCode) {
+  async getQrBase64(options = {}) {
+    const maxAgeMs = typeof options.maxAgeMs === 'number' ? options.maxAgeMs : 5000;
+    const isStale = this.lastQRUpdate && Date.now() - this.lastQRUpdate > maxAgeMs;
+
+    if (options.force || !this.qrCode || isStale) {
       await this._fetchQR();
     }
     return this.qrCode;

@@ -6,6 +6,7 @@ let statusPollingInterval = null;
 let isConnected = false;
 let hasQRDisplayed = false;
 let qrRefreshTimer = null; // Auto-resets hasQRDisplayed so QR never stays stale
+let currentQrObjectUrl = null;
 
 // Format phone number for display using country-aware formatter from core.js
 function formatPhoneDisplay(phone) {
@@ -153,7 +154,12 @@ async function loadQR() {
   if (hasQRDisplayed) return;
 
   try {
-    const res = await authFetch('/qr');
+    const res = await authFetch('/qr?_=' + Date.now(), {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache'
+      }
+    });
     if (!res.ok) {
       if (res.status === 204 || res.status === 400) {
         hasQRDisplayed = false;
@@ -170,10 +176,11 @@ async function loadQR() {
       const imageUrl = URL.createObjectURL(blob);
 
       // Cleanup old blob URL
-      if (qrImage.src && qrImage.src.startsWith('blob:')) {
-        URL.revokeObjectURL(qrImage.src);
+      if (currentQrObjectUrl) {
+        URL.revokeObjectURL(currentQrObjectUrl);
       }
 
+      currentQrObjectUrl = imageUrl;
       qrImage.src = imageUrl;
       qrImage.style.display = 'block';
       hasQRDisplayed = true;
@@ -203,6 +210,21 @@ async function refreshQR() {
 
   if (qrRefreshTimer) { clearTimeout(qrRefreshTimer); qrRefreshTimer = null; }
   hasQRDisplayed = false;
+  try {
+    const refreshRes = await authFetch('/refresh-qr', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache'
+      }
+    });
+    if (!refreshRes.ok && refreshRes.status !== 429) {
+      showAlert('No se pudo generar un QR nuevo. Intentá de nuevo.', 'warning');
+    }
+  } catch (error) {
+    console.error('Error refreshing QR:', error);
+    showAlert('Error al refrescar QR', 'danger');
+  }
   await loadQR();
 
   if (btn) {
