@@ -10,50 +10,58 @@ const recipientsCol = (uid, cid) => db.collection(`users/${uid}/campaigns/${cid}
 const metricEventsCol = (uid) => db.collection(`users/${uid}/metricEvents`);
 const monthlyStatsCol = (uid) => db.collection(`users/${uid}/monthlyStats`);
 const contactStatsCol = (uid) => db.collection(`users/${uid}/contactStats`);
+const rootContactsCol = () => db.collection(process.env.FIRESTORE_CONTACTS_COLLECTION || 'contacts');
+
+const CONTACT_PHONE_FIELDS = ['phone', 'numero', 'number', 'telefono', 'celular'];
+const CONTACT_OWNER_FIELDS = [
+  'uid',
+  'userId',
+  'ownerUid',
+  'ownerId',
+  'createdBy',
+  'created_by',
+  'user_id',
+  'owner.uid',
+  'user.uid',
+];
+const CONTACT_EMAIL_FIELDS = [
+  'email',
+  'userEmail',
+  'ownerEmail',
+  'createdByEmail',
+  'user_email',
+  'owner.email',
+  'user.email',
+];
 
 // ========================================
 // CONTACTS
 // ========================================
 
 async function getContactByPhone(userId, phone) {
-  const normalizedPhone = String(phone || '').trim();
-  const col = contactsCol(userId);
-  const snap = await col.doc(normalizedPhone).get();
-  if (snap.exists) return mapContact(snap.id, snap.data());
-
-  const phoneFields = ['phone', 'numero', 'number', 'telefono', 'celular'];
-  for (const field of phoneFields) {
-    const byField = await col.where(field, '==', normalizedPhone).limit(1).get();
-    if (!byField.empty) {
-      const doc = byField.docs[0];
-      return mapContact(doc.id, doc.data());
-    }
-  }
-
-  return null;
+  const snap = await findContactSnapshotByPhone(userId, phone);
+  return snap ? mapContact(snap.id, snap.data()) : null;
 }
 
 async function getContactById(userId, contactId) {
-  const doc = contactId.includes('/') ? contactId : contactId;
-  const ref = contactsCol(userId).doc(doc);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  return mapContact(snap.id, snap.data());
+  const snap = await findContactSnapshotById(userId, contactId);
+  return snap ? mapContact(snap.id, snap.data()) : null;
 }
 
 async function upsertContact(userId, data, source = 'manual') {
   const phone = String(data.phone || data.numero || '').trim();
   if (!phone) throw new Error('El teléfono es obligatorio');
 
-  const ref = contactsCol(userId).doc(phone);
-  const snap = await ref.get();
+  const snap = await findContactSnapshotByPhone(userId, phone);
+  const ref = snap?.ref || contactsCol(getCanonicalUserId(userId)).doc(phone);
 
   const nombre = data.nombre || null;
   const tratamiento = data.tratamiento || data.sustantivo || null;
   const grupo = data.grupo || null;
 
-  if (snap.exists) {
+  if (snap?.exists) {
     const updates = {};
+    if (!snap.data().phone) updates.phone = phone;
     if (nombre) updates.nombre = nombre;
     if (tratamiento) updates.tratamiento = tratamiento;
     if (grupo) updates.grupo = grupo;
@@ -81,20 +89,21 @@ async function upsertContact(userId, data, source = 'manual') {
 }
 
 async function updateContact(userId, contactId, patch) {
-  const existing = await getContactById(userId, contactId);
-  if (!existing) return null;
+  const existingSnap = await findContactSnapshotById(userId, contactId);
+  if (!existingSnap) return null;
+  const existing = mapContact(existingSnap.id, existingSnap.data());
 
   const targetPhone = String(patch.phone || existing.phone).trim();
   if (!targetPhone) throw new Error('El teléfono es obligatorio');
 
   if (targetPhone !== existing.phone) {
-    const phoneTaken = await getContactByPhone(userId, targetPhone);
-    if (phoneTaken && phoneTaken.id !== existing.id) {
+    const phoneTaken = await findContactSnapshotByPhone(userId, targetPhone);
+    if (phoneTaken && phoneTaken.ref.path !== existingSnap.ref.path) {
       throw new Error('Ya existe un contacto con ese número');
     }
   }
 
-  const ref = contactsCol(userId).doc(existing.id);
+  const ref = existingSnap.ref;
   const updates = {
     phone: targetPhone,
     nombre: patch.nombre !== undefined ? patch.nombre : existing.nombre,
@@ -104,22 +113,22 @@ async function updateContact(userId, contactId, patch) {
   };
   await ref.update(updates);
 
-  if (targetPhone !== existing.id) {
-    const newRef = contactsCol(userId).doc(targetPhone);
+  if (isUserContactsPath(ref.path) && targetPhone !== existing.id) {
+    const newRef = ref.parent.doc(targetPhone);
     await newRef.set(updates, { merge: true });
     await ref.delete();
+    const after = await newRef.get();
+    return mapContact(after.id, after.data());
   }
 
-  const after = targetPhone !== existing.id
-    ? await contactsCol(userId).doc(targetPhone).get()
-    : await ref.get();
+  const after = await ref.get();
   return mapContact(after.id, after.data());
 }
 
 async function deleteContact(userId, contactId) {
-  const existing = await getContactById(userId, contactId);
+  const existing = await findContactSnapshotById(userId, contactId);
   if (!existing) return false;
-  await contactsCol(userId).doc(existing.id).delete();
+  await existing.ref.delete();
   return true;
 }
 
@@ -129,9 +138,7 @@ async function listContacts(userId, opts = {}) {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.max(1, Math.min(200, Number(opts.pageSize) || 25));
 
-  const snap = await contactsCol(userId).get();
-  let docs = [];
-  snap.forEach(d => docs.push(d));
+  let docs = await getAllContactSnapshots(userId);
 
   docs.sort((a, b) => {
     const aUp = toMillis(a.data().updatedAt) || 0;
@@ -166,9 +173,9 @@ async function listContacts(userId, opts = {}) {
 }
 
 async function getContactGroups(userId) {
-  const snap = await contactsCol(userId).get();
+  const docs = await getAllContactSnapshots(userId);
   const groups = new Set();
-  snap.forEach(d => {
+  docs.forEach(d => {
     const data = d.data();
     const g = data.grupo || data.group;
     if (g && String(g).trim()) groups.add(String(g).trim());
@@ -190,9 +197,9 @@ async function getContactsByGroup(userId, groupName) {
   const targetGroup = String(groupName || '').trim().toLowerCase();
   if (!targetGroup) return [];
 
-  const snap = await contactsCol(userId).get();
+  const docs = await getAllContactSnapshots(userId);
   const results = [];
-  snap.forEach(d => {
+  docs.forEach(d => {
     const contact = mapContact(d.id, d.data());
     if (String(contact.grupo || '').trim().toLowerCase() === targetGroup) {
       results.push(contact);
@@ -756,6 +763,244 @@ function parseRange(from, to) {
   const start = parseTs(from, false) ?? (end - (30 * 24 * 3600 * 1000));
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   return { start, end };
+}
+
+function getCanonicalUserId(userId) {
+  if (userId && typeof userId === 'object') {
+    return String(userId.uid || userId.userId || userId.id || 'default').trim() || 'default';
+  }
+  return String(userId || 'default').trim() || 'default';
+}
+
+function addAlias(aliases, value) {
+  const alias = String(value || '').trim();
+  if (!alias || alias.includes('/')) return;
+  aliases.add(alias);
+}
+
+async function getContactOwnerAliases(userId) {
+  const canonicalUserId = getCanonicalUserId(userId);
+  const aliases = new Set();
+  addAlias(aliases, canonicalUserId);
+
+  if (userId && typeof userId === 'object') {
+    [
+      userId.uid,
+      userId.userId,
+      userId.id,
+      userId.email,
+      userId.legacyUid,
+      userId.legacyUserId,
+      userId.keycloakId,
+      userId.whatsappPhone,
+    ].forEach(value => addAlias(aliases, value));
+  }
+
+  String(process.env.FIRESTORE_CONTACT_OWNER_ALIASES || '')
+    .split(',')
+    .forEach(value => addAlias(aliases, value));
+
+  try {
+    const userSnap = await db.collection('users').doc(canonicalUserId).get();
+    if (userSnap.exists) {
+      const data = userSnap.data() || {};
+      [
+        data.uid,
+        data.userId,
+        data.id,
+        data.email,
+        data.legacyUid,
+        data.legacyUserId,
+        data.keycloakId,
+        data.whatsappPhone,
+      ].forEach(value => addAlias(aliases, value));
+    }
+  } catch (err) {
+    logger.debug({ err: err.message, userId: canonicalUserId }, 'Could not load Firestore user aliases for contacts');
+  }
+
+  return [...aliases];
+}
+
+async function getContactCollectionRefs(userId) {
+  const aliases = await getContactOwnerAliases(userId);
+  return getContactCollectionRefsFromAliases(aliases);
+}
+
+function getContactCollectionRefsFromAliases(aliases) {
+  const seen = new Set();
+  return aliases
+    .map(alias => contactsCol(alias))
+    .filter(ref => {
+      if (seen.has(ref.path)) return false;
+      seen.add(ref.path);
+      return true;
+    });
+}
+
+async function getAllContactSnapshots(userId) {
+  const aliases = await getContactOwnerAliases(userId);
+  return getAllContactSnapshotsForAliases(aliases);
+}
+
+async function getAllContactSnapshotsForAliases(aliases) {
+  const docs = [];
+
+  for (const col of getContactCollectionRefsFromAliases(aliases)) {
+    await collectQueryDocs(col, docs);
+  }
+
+  await collectOwnedRootContactDocs(aliases, docs);
+  return dedupeContactDocs(docs);
+}
+
+async function collectOwnedRootContactDocs(aliases, docs) {
+  const allAliases = aliases.filter(Boolean);
+  const emailAliases = allAliases.filter(alias => alias.includes('@'));
+
+  for (const field of CONTACT_OWNER_FIELDS) {
+    for (const alias of allAliases) {
+      await collectQueryDocs(rootContactsCol().where(field, '==', alias), docs);
+    }
+  }
+
+  for (const field of CONTACT_EMAIL_FIELDS) {
+    for (const alias of emailAliases) {
+      await collectQueryDocs(rootContactsCol().where(field, '==', alias), docs);
+    }
+  }
+
+  if (String(process.env.FIRESTORE_CONTACTS_INCLUDE_GLOBAL || '').toLowerCase() === 'true') {
+    await collectQueryDocs(rootContactsCol(), docs);
+  }
+}
+
+async function collectQueryDocs(query, docs) {
+  try {
+    const snap = await query.get();
+    snap.forEach(doc => docs.push(doc));
+  } catch (err) {
+    logger.debug({ err: err.message }, 'Skipping Firestore contacts query');
+  }
+}
+
+function dedupeContactDocs(docs) {
+  const byPhone = new Map();
+  const byPath = new Map();
+
+  for (const doc of docs) {
+    if (!doc?.exists) continue;
+    const contact = mapContact(doc.id, doc.data());
+    const phoneKey = normalizePhoneKey(contact.phone);
+    if (phoneKey) {
+      if (!byPhone.has(phoneKey)) byPhone.set(phoneKey, doc);
+      continue;
+    }
+    if (!byPath.has(doc.ref.path)) byPath.set(doc.ref.path, doc);
+  }
+
+  return [...byPhone.values(), ...byPath.values()];
+}
+
+async function findContactSnapshotByPhone(userId, phone) {
+  const normalizedPhone = String(phone || '').trim();
+  if (!normalizedPhone) return null;
+
+  const aliases = await getContactOwnerAliases(userId);
+  for (const col of getContactCollectionRefsFromAliases(aliases)) {
+    const byId = await safeGetDoc(col.doc(normalizedPhone));
+    if (byId?.exists) return byId;
+
+    for (const field of CONTACT_PHONE_FIELDS) {
+      const byField = await safeGetFirst(col.where(field, '==', normalizedPhone));
+      if (byField) return byField;
+    }
+  }
+
+  const docs = await getAllContactSnapshotsForAliases(aliases);
+  return docs.find(doc => phoneMatches(mapContact(doc.id, doc.data()).phone, normalizedPhone)) || null;
+}
+
+async function findContactSnapshotById(userId, contactId) {
+  const id = String(contactId || '').trim();
+  if (!id) return null;
+
+  const aliases = await getContactOwnerAliases(userId);
+  if (id.includes('/')) {
+    const byPath = await safeGetDoc(db.doc(id));
+    if (byPath?.exists && contactBelongsToAliases(byPath, aliases)) return byPath;
+  }
+
+  for (const col of getContactCollectionRefsFromAliases(aliases)) {
+    const snap = await safeGetDoc(col.doc(id));
+    if (snap?.exists) return snap;
+  }
+
+  const rootSnap = await safeGetDoc(rootContactsCol().doc(id));
+  if (rootSnap?.exists && contactBelongsToAliases(rootSnap, aliases)) return rootSnap;
+
+  const docs = await getAllContactSnapshotsForAliases(aliases);
+  return docs.find(doc => doc.id === id || doc.ref.path === id) || null;
+}
+
+async function safeGetDoc(ref) {
+  try {
+    return await ref.get();
+  } catch (err) {
+    logger.debug({ err: err.message, path: ref.path }, 'Skipping Firestore contact doc read');
+    return null;
+  }
+}
+
+async function safeGetFirst(query) {
+  try {
+    const snap = await query.limit(1).get();
+    return snap.empty ? null : snap.docs[0];
+  } catch (err) {
+    logger.debug({ err: err.message }, 'Skipping Firestore contact lookup');
+    return null;
+  }
+}
+
+function contactBelongsToAliases(doc, aliases) {
+  const aliasSet = new Set(aliases);
+  const parts = doc.ref.path.split('/');
+  if (parts[0] === 'users' && parts[2] === 'contacts' && aliasSet.has(parts[1])) {
+    return true;
+  }
+
+  const data = doc.data() || {};
+  for (const field of [...CONTACT_OWNER_FIELDS, ...CONTACT_EMAIL_FIELDS]) {
+    const value = getNestedValue(data, field);
+    if (value && aliasSet.has(String(value).trim())) return true;
+  }
+
+  return String(process.env.FIRESTORE_CONTACTS_INCLUDE_GLOBAL || '').toLowerCase() === 'true';
+}
+
+function getNestedValue(data, path) {
+  return String(path).split('.').reduce((value, key) => {
+    if (value && Object.prototype.hasOwnProperty.call(value, key)) return value[key];
+    return undefined;
+  }, data);
+}
+
+function isUserContactsPath(path) {
+  const parts = String(path || '').split('/');
+  return parts[0] === 'users' && parts[2] === 'contacts';
+}
+
+function normalizePhoneKey(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function phoneMatches(left, right) {
+  const a = String(left || '').trim();
+  const b = String(right || '').trim();
+  if (a && b && a === b) return true;
+  const da = normalizePhoneKey(a);
+  const db = normalizePhoneKey(b);
+  return !!da && !!db && da === db;
 }
 
 function mapContact(id, data) {

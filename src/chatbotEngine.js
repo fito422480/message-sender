@@ -208,21 +208,9 @@ function isActiveDay(config) {
 }
 
 async function isKnownContact(userId, phone) {
-  const contacts = db.collection(`users/${userId}/contacts`);
-  const normalizedPhone = String(phone || '').trim();
-  const snap = await contacts.doc(normalizedPhone).get();
-  if (snap.exists) return mapKnownContact(snap.id, snap.data());
-
-  const phoneFields = ['phone', 'numero', 'number', 'telefono', 'celular'];
-  for (const field of phoneFields) {
-    const byField = await contacts.where(field, '==', normalizedPhone).limit(1).get();
-    if (!byField.empty) {
-      const doc = byField.docs[0];
-      return mapKnownContact(doc.id, doc.data());
-    }
-  }
-
-  return null;
+  const metricsStore = require('./metricsStore');
+  const contact = await metricsStore.getContactByPhone(userId, phone);
+  return contact ? mapKnownContact(contact.id, contact) : null;
 }
 
 function mapKnownContact(id, data) {

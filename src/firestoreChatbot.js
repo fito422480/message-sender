@@ -6,7 +6,6 @@ const configDoc = (uid) => db.collection(`users/${uid}/chatbot`).doc('config');
 const nodesCol = (uid) => db.collection(`users/${uid}/chatbotNodes`);
 const conversationsCol = (uid) => db.collection(`users/${uid}/chatbotConversations`);
 const inboxCol = (uid) => db.collection(`users/${uid}/inboxMessages`);
-const contactsDoc = (uid, phone) => db.collection(`users/${uid}/contacts`).doc(phone);
 
 // ── Config ──
 
@@ -202,12 +201,12 @@ async function getInboxConversations(userId, page, limit) {
     let tratamiento = null;
     let grupo = null;
     try {
-      const cSnap = await contactsDoc(userId, phone).get();
-      if (cSnap.exists) {
-        const cData = cSnap.data();
-        contactName = cData.nombre || contactName;
-        tratamiento = cData.tratamiento || null;
-        grupo = cData.grupo || null;
+      const metricsStore = require('./metricsStore');
+      const contact = await metricsStore.getContactByPhone(userId, phone);
+      if (contact) {
+        contactName = contact.nombre || contactName;
+        tratamiento = contact.tratamiento || null;
+        grupo = contact.grupo || null;
       }
     } catch (e) { /* ignore */ }
 
