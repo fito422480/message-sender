@@ -49,6 +49,7 @@ async function ensureUserProfile(req, res, next) {
       const profile = {
         email: req.auth.email || "",
         displayName: req.auth.name || "",
+        photoURL: req.auth.picture || null,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         trialEndsAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
         plan: "trial",
@@ -74,6 +75,7 @@ async function ensureUserProfile(req, res, next) {
         uid,
         email: data.email,
         displayName: data.displayName,
+        photoURL: data.photoURL || req.auth.picture || null,
         createdAt: data.createdAt,
         trialEndsAt: data.trialEndsAt,
         plan: data.plan,
@@ -104,6 +106,7 @@ async function ensureUserProfile(req, res, next) {
       uid,
       email: data.email,
       displayName: data.displayName,
+      photoURL: data.photoURL || req.auth.picture || null,
       createdAt: data.createdAt,
       trialEndsAt: data.trialEndsAt,
       plan: data.plan,

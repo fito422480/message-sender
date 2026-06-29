@@ -7744,6 +7744,19 @@ a.btn-link:hover {
   font-size: 2rem;
   color: var(--accent);
   line-height: 1;
+  position: relative;
+}
+
+.profile-avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-avatar-img.d-none + .bi-person-circle {
+  display: block;
 }
 
 .profile-dropdown-info {

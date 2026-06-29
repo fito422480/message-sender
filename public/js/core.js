@@ -1084,6 +1084,21 @@ function updateProfileDropdown() {
   if (nameEl) nameEl.textContent = (user && user.displayName) || (profile && profile.name) || 'Usuario';
   if (emailEl) emailEl.textContent = (user && user.email) || '';
 
+  // Avatar photo
+  var avatarImg = document.getElementById('profile-avatar-img');
+  var avatarIcon = document.getElementById('profile-avatar-icon');
+  var photoUrl = (user && user.photoURL) || (profile && profile.photoURL);
+  if (avatarImg && avatarIcon) {
+    if (photoUrl) {
+      avatarImg.src = photoUrl;
+      avatarImg.classList.remove('d-none');
+      avatarIcon.classList.add('d-none');
+    } else {
+      avatarImg.classList.add('d-none');
+      avatarIcon.classList.remove('d-none');
+    }
+  }
+
   // Country
   var country = ensureUserProfileCountry(profile && profile.country);
   var flagEl = document.getElementById('profile-country-flag');
