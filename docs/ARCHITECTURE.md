@@ -107,8 +107,9 @@ flowchart TB
     end
     
     subgraph Stores
+        MetricsFS[metricsStoreFirestore.js]
         MetricsPG[metricsStorePostgres.js]
-        MetricsRedis[metricsStoreRedis.js]
+        MetricsStub[stub sin persistencia]
         AuthState[stores/redisAuthState.js]
     end
     
@@ -117,11 +118,12 @@ flowchart TB
     Routes --> Queue
     Routes --> Metrics
     
-    Metrics -->|POSTGRES_HOST?| MetricsPG
-    Metrics -->|fallback| MetricsRedis
+    Metrics -->|Firebase Admin available| MetricsFS
+    Metrics -->|fallback: POSTGRES_HOST| MetricsPG
+    Metrics -->|fallback| MetricsStub
     
+    MetricsFS --> Firebase[(Firestore)]
     MetricsPG --> PGClient
-    MetricsRedis --> RedisClient
     AuthState --> RedisClient
     Manager --> S3Client
 ```
@@ -130,14 +132,16 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    Start[metricsStore.js] --> Check{POSTGRES_HOST<br/>definido?}
-    Check -->|Sí| UsePG[metricsStorePostgres.js]
-    Check -->|No| UseRedis[metricsStoreRedis.js]
+    Start[metricsStore.js] --> CheckFirebase{Firebase Admin<br/>disponible?}
+    CheckFirebase -->|Sí| UseFS[metricsStoreFirestore.js]
+    CheckFirebase -->|No| CheckPG{POSTGRES_HOST<br/>definido?}
+    CheckPG -->|Sí| UsePG[metricsStorePostgres.js]
+    CheckPG -->|No| UseStub[stub sin persistencia]
     
+    UseFS --> Firestore[(Firestore)]
     UsePG --> PG[(PostgreSQL)]
     UsePG --> RedisCache[(Redis Cache)]
-    
-    UseRedis --> Redis[(Redis)]
+    UseStub --> NoDB[(sin persistencia)]
 ```
 
 ---

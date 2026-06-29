@@ -37,7 +37,7 @@ No automated test suite exists. Manual testing via `test-audio.js` and scripts i
 | `queueRedis.js` | BullMQ worker (`ms:messages` queue), message processing with retries, campaign progress tracking |
 | `chatbotEngine.js` | Chatbot flow engine, AI integration (OpenAI etc.), conversation state, message routing, API key encryption/decryption |
 | `auth.js` | Firebase ID token verification via `firebase-admin`. Bypassed in development (mock user) |
-| `metricsStore.js` | Auto-selects PostgreSQL (`metricsStorePostgres.js`) or Redis fallback based on `POSTGRES_HOST` |
+| `metricsStore.js` | Uses Firestore (`metricsStoreFirestore.js`) when Firebase Admin is available; PostgreSQL is fallback |
 | `postgresClient.js` | Connection pool (size 10), slow query logging (>1s) |
 | `redisClient.js` | ioredis singleton via `getRedis()` |
 | `media.js` | Multer upload + FFmpeg audio conversion (AAC, 64k, 16kHz, mono) |
@@ -53,7 +53,7 @@ Vanilla JS modules with Bootstrap 5. Polls `/connection-status` every 15s for Wh
 
 ### Database (`db/init/01-schema.sql`)
 
-PostgreSQL tables: `contacts` (unique per user+phone), `campaigns`, `campaign_recipients`, `metric_events`, `monthly_stats`, `contact_stats`, `templates`, `chatbot_configs` (bot settings, AI config, encrypted API keys), `chatbot_nodes` (flow nodes with JSONB content), `chatbot_conversations` (per-contact conversation state), `incoming_messages` (inbox message log with read/unread tracking). Views: `v_user_summary`, `v_monthly_activity`. Auto-updated `updated_at` triggers.
+Firestore is the primary persistence layer for contacts, campaigns, metrics, templates, chatbot configs/nodes/conversations, and incoming messages. PostgreSQL tables in `db/init/01-schema.sql` are retained as fallback schema for environments without Firebase.
 
 ### Infrastructure
 
@@ -83,4 +83,4 @@ PostgreSQL tables: `contacts` (unique per user+phone), `campaigns`, `campaign_re
 
 ## Key Environment Variables
 
-Core: `PORT`, `NODE_ENV`. Auth: `FIREBASE_SERVICE_ACCOUNT` (base64-encoded service-account JSON) or `GOOGLE_APPLICATION_CREDENTIALS` (file path). Redis: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` (or `REDIS_URL`). PostgreSQL: `POSTGRES_HOST/PORT/USER/PASSWORD/DB`. S3/MinIO: `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`. Chatbot: `CHATBOT_ENCRYPTION_KEY` (32-byte hex key for AES-256 encryption of AI API keys). See `.env.example` for full list.
+Core: `PORT`, `NODE_ENV`. Auth/persistence: `FIREBASE_SERVICE_ACCOUNT` (base64-encoded service-account JSON) or `GOOGLE_APPLICATION_CREDENTIALS` (file path). Redis: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` (or `REDIS_URL`). PostgreSQL fallback: `POSTGRES_HOST/PORT/USER/PASSWORD/DB`. S3/MinIO: `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`. Chatbot: `CHATBOT_ENCRYPTION_KEY` (32-byte hex key for AES-256 encryption of AI API keys). See `.env.example` for full list.

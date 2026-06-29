@@ -104,12 +104,12 @@ MESSAGE_DELAY_MS=2000
 # Option B: path to service-account JSON file
 # GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 
-# PostgreSQL (persistencia principal)
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=sender
-POSTGRES_PASSWORD=changeme
-POSTGRES_DB=sender
+# PostgreSQL (opcional, fallback si Firebase no esta disponible)
+# POSTGRES_HOST=localhost
+# POSTGRES_PORT=5432
+# POSTGRES_USER=sender
+# POSTGRES_PASSWORD=changeme
+# POSTGRES_DB=sender
 
 # Redis (sesiones y cola)
 SESSION_STORE=redis
@@ -159,7 +159,7 @@ MINIO_BUCKET=sender
   - `NODE_ENV`, `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_AUDIENCE`
   - `SESSION_STORE`, `AUTHORIZED_PHONES`, `FILE_RETENTION_HOURS`, `MESSAGE_DELAY_MS`, `LOG_LEVEL`
   - Redis: `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_TLS`, `REDIS_PASSWORD`
-  - PostgreSQL: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+  - PostgreSQL opcional: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
   - MinIO: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`
 - Asegúrate de definirlos en Settings → Secrets and variables → Actions.
 
@@ -168,11 +168,12 @@ MINIO_BUCKET=sender
 - Desarrollo local: `http://localhost:3000`
 - Kubernetes: Ingress en `https://sender.mindtechpy.net` → Service `sender-backend-service:3010`.
 
-### PostgreSQL + Redis (almacenamiento híbrido)
+### Firebase + Redis
 
-- **PostgreSQL**: Base de datos principal para contactos, campañas y métricas. Desplegado con Longhorn PVC para persistencia.
+- **Firestore**: Base de datos principal para contactos, campañas, métricas, plantillas, chatbot e inbox.
+- **PostgreSQL**: Fallback opcional para entornos sin Firebase.
 - **Redis**: Sesiones de WhatsApp, cola BullMQ y caché. Externo (redis.mindtechpy.net).
-- El backend auto-selecciona PostgreSQL si `POSTGRES_HOST` está definido, sino usa Redis como fallback.
+- El backend usa Firestore siempre que Firebase Admin esté configurado.
 - **Botón Limpiar Caché**: En el dashboard puedes limpiar el caché Redis de tu usuario (métricas, contactos temporales).
 
 ### Docker Compose (local)
