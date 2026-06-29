@@ -52,10 +52,11 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 
 - **Backend**: Node.js 20+ con Express
 - **WhatsApp Integration**: @whiskeysockets/baileys (socket-based)
-- **Base de datos**: PostgreSQL 16 con persistencia Longhorn (K8s)
+- **Base de datos principal**: Firebase Firestore para contactos, campañas, métricas, plantillas, chatbot e inbox
+- **Base opcional**: PostgreSQL solo como fallback si Firebase Admin no está disponible
 - **Caché/Colas**: Redis 7.2 con BullMQ
 - **Almacenamiento**: MinIO/S3 para archivos multimedia
-- **Autenticación**: Firebase Auth con bypass para desarrollo
+- **Autenticación**: Firebase Auth con bypass controlado para desarrollo
 - **Frontend**: Bootstrap con emoji picker y actualizaciones en tiempo real
 - **Containerización**: Docker con multi-stage builds
 - **CI/CD**: GitHub Actions para deployment automático
@@ -73,6 +74,15 @@ Sistema profesional de envío masivo de mensajes por WhatsApp con arquitectura m
 - **Docker & Docker Compose**: Para deployment en producción
 - **Git**: Para manejo de ramas por cliente
 - **Nginx Proxy Manager**: Recomendado para gestión de dominios
+
+## ✅ Cambios Recientes
+
+- Firestore es la persistencia principal cuando `FIREBASE_SERVICE_ACCOUNT` o `GOOGLE_APPLICATION_CREDENTIALS` están configurados.
+- Contactos, métricas y campañas pueden leerse desde datos históricos guardados bajo `users/dev-user-001/*` usando `FIRESTORE_OWNER_ALIASES=dev-user-001`.
+- El dashboard reconstruye métricas mensuales desde `metricEvents` si `monthlyStats` quedó vacío o con contadores en cero.
+- Se corrigió el incremento de `sentCount` y `errorCount` en Firestore.
+- El selector/validador de país usa `PY` y prefijo `+595` como fallback seguro, evitando estados `undefined` en móvil.
+- PostgreSQL quedó como fallback opcional; no es la fuente principal de contactos, métricas ni campañas.
 
 ## 🛠️ Instalación y Configuración
 
@@ -103,6 +113,22 @@ MESSAGE_DELAY_MS=2000
 # FIREBASE_SERVICE_ACCOUNT=eyJ0eXBlIjoic2VydmljZV9hY2NvdW50Ii...
 # Option B: path to service-account JSON file
 # GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# Firebase Client Config (servida al frontend)
+FIREBASE_API_KEY=your-api-key
+FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
+FIREBASE_MESSAGING_SENDER_ID=000000000000
+FIREBASE_APP_ID=1:000000000000:web:xxxxxxxxxxxx
+
+# Firebase legacy aliases
+# Lee contactos, métricas y campañas históricas desde users/dev-user-001/*
+FIRESTORE_OWNER_ALIASES=dev-user-001
+FIRESTORE_CONTACTS_COLLECTION=contacts
+FIRESTORE_CONTACT_OWNER_ALIASES=dev-user-001
+# Solo activar en instalaciones de un solo usuario si contacts no tiene uid/userId/email
+# FIRESTORE_CONTACTS_INCLUDE_GLOBAL=false
 
 # PostgreSQL (opcional, fallback si Firebase no esta disponible)
 # POSTGRES_HOST=localhost
@@ -135,35 +161,64 @@ MINIO_BUCKET=sender
 # LOG_LEVEL=info
 ```
 
-## 🏗️ Deployment en Producción (Kubernetes)
+## 🏗️ Deployment en Producción
 
-### CI/CD
+### Railway
+
+Para producción en Railway, define como mínimo:
+
+```env
+NODE_ENV=production
+FIREBASE_SERVICE_ACCOUNT=base64-del-service-account-json
+FIREBASE_API_KEY=...
+FIREBASE_AUTH_DOMAIN=...
+FIREBASE_PROJECT_ID=...
+FIREBASE_STORAGE_BUCKET=...
+FIREBASE_MESSAGING_SENDER_ID=...
+FIREBASE_APP_ID=...
+FIRESTORE_OWNER_ALIASES=dev-user-001
+SESSION_STORE=redis
+REDIS_URL=redis://...
+```
+
+Notas importantes:
+
+- No uses `NODE_ENV=development` en Railway.
+- `FIRESTORE_OWNER_ALIASES=dev-user-001` permite leer datos históricos guardados bajo `users/dev-user-001/*`.
+- Si los contactos están en una colección raíz `contacts` sin campo de dueño, activa `FIRESTORE_CONTACTS_INCLUDE_GLOBAL=true` solo si la instalación es de un único usuario.
+- Después de cambiar variables, haz redeploy para que el backend cargue la nueva configuración.
+
+### Kubernetes
+
+#### CI/CD
 
 - El workflow `.github/workflows/deploy.yml` compila y publica la imagen en GHCR y despliega en el clúster al hacer push a `main`.
 - Requiere un runner `self-hosted` con `docker` y `kubectl` configurado contra tu clúster.
 
-### Manifests incluidos (namespace: `sender`)
+#### Manifests incluidos (namespace: `sender`)
 
 - `k8s/namespace.yaml` — crea el namespace `sender`.
-- `k8s/configmap.yaml` — configuración no sensible (PORT=3010 en K8s, TTLs, LOG*LEVEL, KEYCLOAK*\* por defecto).
-- `k8s/postgresql.yaml` — PostgreSQL 16 con Longhorn PVC (5Gi), Secret e init SQL.
+- `k8s/configmap.yaml` — configuración no sensible (PORT=3010 en K8s, TTLs, Redis y logs).
+- `k8s/postgresql.yaml` — PostgreSQL 16 legacy/fallback con Longhorn PVC (5Gi), Secret e init SQL.
 - `k8s/backend-deployment.yaml` — Deployment/Service/HPA del backend.
   - Deployment: `sender-backend` (puerto contenedor 3010)
   - Service: `sender-backend-service` (ClusterIP 3010)
   - Readiness/Liveness: `/health` en 3010
 - `k8s/ingress.yaml` — Ingress HTTPS para `sender.mindtechpy.net` (cert-manager `letsencrypt-prod`).
 
-### Variables desde GitHub Secrets
+#### Variables desde GitHub Secrets
 
 - Secret `backend-env-secrets` se recrea en cada deploy con tus Secrets:
-  - `NODE_ENV`, `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_AUDIENCE`
+  - `NODE_ENV`, `FIREBASE_SERVICE_ACCOUNT`
+  - Firebase client: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_MESSAGING_SENDER_ID`, `FIREBASE_APP_ID`, `FIREBASE_MEASUREMENT_ID`
+  - Firestore legacy: `FIRESTORE_OWNER_ALIASES`, `FIRESTORE_CONTACTS_COLLECTION`, `FIRESTORE_CONTACT_OWNER_ALIASES`, `FIRESTORE_CONTACTS_INCLUDE_GLOBAL`
   - `SESSION_STORE`, `AUTHORIZED_PHONES`, `FILE_RETENTION_HOURS`, `MESSAGE_DELAY_MS`, `LOG_LEVEL`
   - Redis: `REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_TLS`, `REDIS_PASSWORD`
   - PostgreSQL opcional: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
   - MinIO: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`
 - Asegúrate de definirlos en Settings → Secrets and variables → Actions.
 
-### Puertos y acceso
+#### Puertos y acceso
 
 - Desarrollo local: `http://localhost:3000`
 - Kubernetes: Ingress en `https://sender.mindtechpy.net` → Service `sender-backend-service:3010`.
@@ -171,6 +226,8 @@ MINIO_BUCKET=sender
 ### Firebase + Redis
 
 - **Firestore**: Base de datos principal para contactos, campañas, métricas, plantillas, chatbot e inbox.
+- **Aliases Firestore**: `FIRESTORE_OWNER_ALIASES=dev-user-001` permite leer datos históricos guardados bajo otro usuario.
+- **Métricas**: El dashboard lee `metricEvents` y usa `monthlyStats`; si `monthlyStats` está vacío, reconstruye el mes desde eventos.
 - **PostgreSQL**: Fallback opcional para entornos sin Firebase.
 - **Redis**: Sesiones de WhatsApp, cola BullMQ y caché. Externo (redis.mindtechpy.net).
 - El backend usa Firestore siempre que Firebase Admin esté configurado.
@@ -241,7 +298,7 @@ numero,tratamiento,nombre,grupo
 ```
 
 - **Formato**: número obligatorio, columnas adicionales opcionales.
-- **Prefijo**: se normaliza a código de país Paraguay (`595`).
+- **Prefijo**: se normaliza según el país configurado del usuario; si falta configuración, usa Paraguay (`PY`, `+595`) como fallback seguro.
 - **Variables disponibles**: `{tratamiento}`, `{nombre}`, `{grupo}`.
 
 ## 📈 Gráficos en Markdown (Mermaid)
@@ -252,14 +309,15 @@ numero,tratamiento,nombre,grupo
 flowchart LR
   UI["Frontend (Firebase Auth + Dashboard)"] --> API["Express API"]
   API --> Q["BullMQ/Redis Queue"]
-  API --> PG["PostgreSQL<br/>(Contactos/Campañas/Chatbot)"]
+  API --> FS["Firestore<br/>(Contactos/Campañas/Métricas/Chatbot/Inbox)"]
+  API -. fallback opcional .-> PG["PostgreSQL<br/>(legacy)"]
   API --> R["Redis<br/>(Sesiones/Caché)"]
   Q --> WA["Baileys WhatsApp"]
   WA --> CB["Chatbot Engine"]
   CB --> AI["AI Provider<br/>(OpenAI, etc.)"]
-  CB --> PG
-  Q --> PG
-  PG --> UI
+  CB --> FS
+  Q --> FS
+  FS --> UI
 ```
 
 ### Flujo de campaña con tracking
@@ -269,18 +327,18 @@ sequenceDiagram
   participant U as Usuario
   participant FE as Frontend
   participant BE as API
-  participant PG as PostgreSQL
+  participant FS as Firestore
   participant RQ as Redis Queue
   participant WA as WhatsApp
 
   U->>FE: Cargar CSV + templates
   FE->>BE: POST /send-messages
-  BE->>PG: Upsert contactos + crear campaña
+  BE->>FS: Upsert contactos + crear campaña
   BE->>RQ: enqueueCampaign(campaignId)
   RQ->>WA: Enviar mensaje por contacto
-  RQ->>PG: Registrar sent/error por destinatario
+  RQ->>FS: Registrar sent/error + metricEvents
   FE->>BE: GET /dashboard/*
-  BE->>PG: SELECT métricas
+  BE->>FS: Leer metricEvents + monthlyStats
   BE->>FE: Timeline, torta por grupo, mensual
 ```
 
@@ -291,22 +349,22 @@ sequenceDiagram
   participant U as Usuario
   participant FE as Frontend
   participant BE as API
-  participant DB as PostgreSQL
+  participant FS as Firestore
 
   U->>FE: Abrir pestaña Contactos
   FE->>BE: GET /contacts?search=&group=&page=&pageSize=
-  BE->>DB: SELECT contactos paginados
-  DB-->>BE: items + total
+  BE->>FS: Leer users/{uid}/contacts + aliases legacy
+  FS-->>BE: items + total
   BE-->>FE: Lista paginada
 
   U->>FE: Click en editar (lapiz)
   FE->>BE: GET /contacts/:contactId
-  BE->>DB: SELECT contacto por id
+  BE->>FS: Buscar contacto por id/telefono
   BE-->>FE: Contacto
   FE->>U: Mostrar modal de edición
   U->>FE: Guardar cambios
   FE->>BE: PUT /contacts/:contactId
-  BE->>DB: UPDATE contacto
+  BE->>FS: Actualizar contacto
   BE-->>FE: Contacto actualizado
 ```
 
@@ -425,6 +483,49 @@ docker compose logs audio-sender
 - 🔑 **API Key Encryption**: Claves de API de IA cifradas con AES-256-CBC
 
 ## 🐛 Solución de Problemas
+
+### **Firestore no trae contactos, métricas o campañas**
+
+- Verifica que Firebase Admin esté configurado en producción:
+
+```env
+FIREBASE_SERVICE_ACCOUNT=base64-del-service-account-json
+```
+
+- Si los datos históricos están en `users/dev-user-001/*`, define:
+
+```env
+FIRESTORE_OWNER_ALIASES=dev-user-001
+```
+
+- Rutas que se leen con alias:
+  - `users/{uid}/contacts`
+  - `users/{uid}/metricEvents`
+  - `users/{uid}/monthlyStats`
+  - `users/{uid}/campaigns`
+
+- Si los contactos están en colección raíz `contacts`, el backend busca campos de dueño como `uid`, `userId`, `ownerUid`, `user_id` o `email`.
+- `FIRESTORE_CONTACTS_INCLUDE_GLOBAL=true` solo debe usarse si la colección raíz `contacts` no tiene dueño y la instalación es de un solo usuario.
+- Después de cambiar variables en Railway/K8s, haz redeploy.
+
+### **Dashboard en cero aunque hay envíos**
+
+- El dashboard usa `metricEvents` como fuente de verdad.
+- `monthlyStats` acelera la lectura mensual, pero si está vacío o quedó en cero, el backend reconstruye el mes desde `metricEvents`.
+- Los eventos válidos para métricas son:
+  - `message_sent`
+  - `message_error`
+- Cada evento debe tener `createdAt` y, para agrupación, idealmente `campaignId`, `phone` y `grupo`.
+
+### **País o prefijo aparece undefined en móvil**
+
+- El frontend normaliza cualquier país vacío, `undefined` o inválido a `PY`.
+- Paraguay usa `+595` y acepta formatos como:
+  - `+595 972 117 231`
+  - `595972117231`
+  - `0972117231`
+  - `972117231`
+- Si el móvil conserva un estado viejo, cerrar sesión y volver a entrar suele regenerar `localStorage.countryConfirmed`.
 
 ### **Problemas de Conexión**
 

@@ -284,8 +284,8 @@ async function createCampaign(userId, payload = {}) {
 }
 
 async function getCampaign(userId, campaignId) {
-  const snap = await campaignsCol(userId).doc(campaignId).get();
-  if (!snap.exists) return null;
+  const snap = await findCampaignSnapshot(userId, campaignId);
+  if (!snap) return null;
   return mapCampaign(snap.id, snap.data());
 }
 
@@ -433,10 +433,12 @@ async function recordRecipientStatus(userId, campaignId, entry, status, meta = {
 }
 
 async function getCampaignDetail(userId, campaignId) {
-  const campaign = await getCampaign(userId, campaignId);
-  if (!campaign) return null;
+  const campaignSnap = await findCampaignSnapshot(userId, campaignId);
+  if (!campaignSnap) return null;
+  const campaign = mapCampaign(campaignSnap.id, campaignSnap.data());
+  const campaignOwner = getUserIdFromUserSubcollectionPath(campaignSnap.ref.path) || getCanonicalUserId(userId);
 
-  const snap = await recipientsCol(userId, campaignId)
+  const snap = await recipientsCol(campaignOwner, campaignId)
     .orderBy('updatedAt', 'desc')
     .get();
   const recipients = [];
@@ -449,10 +451,13 @@ async function listCampaigns(userId, opts = {}) {
   const page = Math.max(1, Number(opts.page) || 1);
   const pageSize = Math.max(1, Math.min(50, Number(opts.pageSize) || 20));
 
-  let query = campaignsCol(userId).orderBy('createdAt', 'desc');
-  const snap = await query.limit(2000).get();
+  const aliases = await getFirestoreOwnerAliases(userId);
   let docs = [];
-  snap.forEach(d => docs.push(d));
+
+  for (const alias of aliases) {
+    await collectQueryDocs(campaignsCol(alias).orderBy('createdAt', 'desc').limit(2000), docs);
+  }
+  docs = dedupeDocsByPath(docs);
 
   if (opts.search) {
     const s = opts.search.toLowerCase();
@@ -461,14 +466,22 @@ async function listCampaigns(userId, opts = {}) {
 
   if (opts.dateFrom) {
     const from = new Date(opts.dateFrom);
-    docs = docs.filter(d => d.data().createdAt && d.data().createdAt.toDate() >= from);
+    docs = docs.filter(d => {
+      const createdAt = toMillis(d.data().createdAt);
+      return createdAt && createdAt >= from.getTime();
+    });
   }
 
   if (opts.dateTo) {
     const to = new Date(opts.dateTo);
     to.setHours(23, 59, 59, 999);
-    docs = docs.filter(d => d.data().createdAt && d.data().createdAt.toDate() <= to);
+    docs = docs.filter(d => {
+      const createdAt = toMillis(d.data().createdAt);
+      return createdAt && createdAt <= to.getTime();
+    });
   }
+
+  docs.sort((a, b) => (toMillis(b.data().createdAt) || 0) - (toMillis(a.data().createdAt) || 0));
 
   const total = docs.length;
   const offset = (page - 1) * pageSize;
@@ -504,14 +517,16 @@ async function incrementMonthlyCounters(userId, status) {
   const field = status === 'sent' ? 'sentCount' : 'errorCount';
   const ref = monthlyStatsCol(userId).doc(month);
 
-  await ref.set({
+  const payload = {
     month,
-    [field]: FieldValue.increment(1),
     sentCount: FieldValue.increment(0),
     errorCount: FieldValue.increment(0),
     campaignCount: FieldValue.increment(0),
     updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+  };
+  payload[field] = FieldValue.increment(1);
+
+  await ref.set(payload, { merge: true });
 }
 
 async function updateContactStats(userId, recipient, status) {
@@ -521,38 +536,35 @@ async function updateContactStats(userId, recipient, status) {
   const field = status === 'sent' ? 'sentCount' : 'errorCount';
   const ref = contactStatsCol(userId).doc(phone);
 
-  await ref.set({
+  const payload = {
     phone,
     contactId: recipient.contactId || null,
     nombre: recipient.nombre || null,
     grupo: recipient.grupo || null,
-    [field]: FieldValue.increment(1),
     sentCount: FieldValue.increment(0),
     errorCount: FieldValue.increment(0),
     lastActivityAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+  };
+  payload[field] = FieldValue.increment(1);
+
+  await ref.set(payload, { merge: true });
 }
 
 async function dashboardSummary(userId, from, to) {
   const range = parseRange(from, to);
   if (!range) throw new Error('Rango de fechas inválido');
 
-  const start = new Date(range.start);
-  const end = new Date(range.end);
-
-  const eventsSnap = await metricEventsCol(userId)
-    .where('createdAt', '>=', start)
-    .where('createdAt', '<=', end)
-    .get();
+  const eventDocs = await getMetricEventSnapshots(userId, range);
 
   let sent = 0;
   let errors = 0;
   const campaignIds = new Set();
 
-  eventsSnap.forEach(d => {
+  eventDocs.forEach(d => {
     const data = d.data();
-    if (data.eventType === 'message_sent') sent++;
-    else if (data.eventType === 'message_error') errors++;
+    const eventType = getMetricEventType(data);
+    if (eventType === 'message_sent') sent++;
+    else if (eventType === 'message_error') errors++;
     if (data.campaignId) campaignIds.add(data.campaignId);
   });
 
@@ -574,21 +586,15 @@ async function dashboardTimeline(userId, from, to, bucket = 'day') {
   const range = parseRange(from, to);
   if (!range) throw new Error('Rango de fechas inválido');
 
-  const start = new Date(range.start);
-  const end = new Date(range.end);
-
-  const eventsSnap = await metricEventsCol(userId)
-    .where('createdAt', '>=', start)
-    .where('createdAt', '<=', end)
-    .get();
+  const eventDocs = await getMetricEventSnapshots(userId, range);
 
   const buckets = {};
 
-  eventsSnap.forEach(d => {
+  eventDocs.forEach(d => {
     const data = d.data();
-    const et = data.eventType;
+    const et = getMetricEventType(data);
     if (et !== 'message_sent' && et !== 'message_error') return;
-    const ts = data.createdAt ? data.createdAt.toDate() : new Date();
+    const ts = getMetricEventDate(data) || new Date();
     let key;
     if (bucket === 'hour') {
       key = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')} ${String(ts.getHours()).padStart(2, '0')}:00`;
@@ -616,19 +622,13 @@ async function dashboardByGroup(userId, from, to) {
   const range = parseRange(from, to);
   if (!range) throw new Error('Rango de fechas inválido');
 
-  const start = new Date(range.start);
-  const end = new Date(range.end);
-
-  const eventsSnap = await metricEventsCol(userId)
-    .where('createdAt', '>=', start)
-    .where('createdAt', '<=', end)
-    .get();
+  const eventDocs = await getMetricEventSnapshots(userId, range);
 
   const groups = {};
 
-  eventsSnap.forEach(d => {
+  eventDocs.forEach(d => {
     const data = d.data();
-    const et = data.eventType;
+    const et = getMetricEventType(data);
     if (et !== 'message_sent' && et !== 'message_error') return;
     const g = data.grupo || 'Sin grupo';
     if (!groups[g]) groups[g] = { sent: 0, errors: 0, total: 0 };
@@ -646,19 +646,13 @@ async function dashboardByContact(userId, from, to, limit = 20) {
   const range = parseRange(from, to);
   if (!range) throw new Error('Rango de fechas inválido');
 
-  const start = new Date(range.start);
-  const end = new Date(range.end);
-
-  const eventsSnap = await metricEventsCol(userId)
-    .where('createdAt', '>=', start)
-    .where('createdAt', '<=', end)
-    .get();
+  const eventDocs = await getMetricEventSnapshots(userId, range);
 
   const byPhone = {};
 
-  eventsSnap.forEach(d => {
+  eventDocs.forEach(d => {
     const data = d.data();
-    const et = data.eventType;
+    const et = getMetricEventType(data);
     if (et !== 'message_sent' && et !== 'message_error') return;
     const phone = data.phone;
     if (!phone) return;
@@ -691,13 +685,10 @@ async function dashboardCurrentMonth(userId) {
   const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const prevMonth = formatMonth(prevDate);
 
-  const [curSnap, prevSnap] = await Promise.all([
-    monthlyStatsCol(userId).doc(curMonth).get(),
-    monthlyStatsCol(userId).doc(prevMonth).get(),
+  const [current, previous] = await Promise.all([
+    getMonthlyStatsAggregate(userId, curMonth),
+    getMonthlyStatsAggregate(userId, prevMonth),
   ]);
-
-  const current = curSnap.exists ? curSnap.data() : { sentCount: 0, errorCount: 0 };
-  const previous = prevSnap.exists ? prevSnap.data() : { sentCount: 0, errorCount: 0 };
 
   const sent = Number(current.sentCount) || 0;
   const errors = Number(current.errorCount) || 0;
@@ -720,15 +711,9 @@ async function dashboardCurrentMonth(userId) {
 }
 
 async function dashboardMonthly(userId, months = 12) {
-  const snap = await monthlyStatsCol(userId)
-    .orderBy('month', 'desc')
-    .limit(months)
-    .get();
+  const results = await getMonthlyStatsRows(userId, months);
 
-  const results = [];
-  snap.forEach(d => results.push(d.data()));
-
-  return results.reverse().map(r => ({
+  return results.map(r => ({
     month: r.month,
     sent: Number(r.sentCount) || 0,
     errors: Number(r.errorCount) || 0,
@@ -765,11 +750,163 @@ function parseRange(from, to) {
   return { start, end };
 }
 
+async function getMetricEventSnapshots(userId, range) {
+  const aliases = await getFirestoreOwnerAliases(userId);
+  const docs = [];
+  const start = new Date(range.start);
+  const end = new Date(range.end);
+
+  for (const alias of aliases) {
+    await collectQueryDocs(
+      metricEventsCol(alias)
+        .where('createdAt', '>=', start)
+        .where('createdAt', '<=', end),
+      docs,
+    );
+  }
+
+  return dedupeDocsByPath(docs).filter(doc => {
+    const date = getMetricEventDate(doc.data());
+    return date && date.getTime() >= range.start && date.getTime() <= range.end;
+  });
+}
+
+async function findCampaignSnapshot(userId, campaignId) {
+  const id = String(campaignId || '').trim();
+  if (!id) return null;
+
+  const aliases = await getFirestoreOwnerAliases(userId);
+  for (const alias of aliases) {
+    const snap = await safeGetDoc(campaignsCol(alias).doc(id));
+    if (snap?.exists) return snap;
+  }
+
+  return null;
+}
+
+async function getMonthlyStatsAggregate(userId, month) {
+  const aliases = await getFirestoreOwnerAliases(userId);
+  const result = { month, sentCount: 0, errorCount: 0, campaignCount: 0 };
+
+  await Promise.all(aliases.map(async (alias) => {
+    const snap = await safeGetDoc(monthlyStatsCol(alias).doc(month));
+    if (!snap?.exists) return;
+    const data = snap.data() || {};
+    result.sentCount += Number(data.sentCount) || 0;
+    result.errorCount += Number(data.errorCount) || 0;
+    result.campaignCount += Number(data.campaignCount) || 0;
+  }));
+
+  if ((result.sentCount + result.errorCount) === 0) {
+    const derived = await getMonthlyEventCounts(userId, month);
+    result.sentCount = derived.sentCount;
+    result.errorCount = derived.errorCount;
+    result.campaignCount = result.campaignCount || derived.campaignCount;
+  }
+
+  return result;
+}
+
+async function getMonthlyStatsRows(userId, months = 12) {
+  const aliases = await getFirestoreOwnerAliases(userId);
+  const byMonth = new Map();
+
+  for (const alias of aliases) {
+    const docs = [];
+    await collectQueryDocs(
+      monthlyStatsCol(alias).orderBy('month', 'desc').limit(months),
+      docs,
+    );
+
+    docs.forEach(doc => {
+      const data = doc.data() || {};
+      const month = data.month || doc.id;
+      if (!month) return;
+      const row = byMonth.get(month) || { month, sentCount: 0, errorCount: 0, campaignCount: 0 };
+      row.sentCount += Number(data.sentCount) || 0;
+      row.errorCount += Number(data.errorCount) || 0;
+      row.campaignCount += Number(data.campaignCount) || 0;
+      byMonth.set(month, row);
+    });
+  }
+
+  const derivedRows = await getMonthlyRowsFromEvents(userId, months);
+  derivedRows.forEach(derived => {
+    const row = byMonth.get(derived.month) || { month: derived.month, sentCount: 0, errorCount: 0, campaignCount: 0 };
+    if ((row.sentCount + row.errorCount) === 0) {
+      row.sentCount = derived.sentCount;
+      row.errorCount = derived.errorCount;
+    }
+    row.campaignCount = row.campaignCount || derived.campaignCount;
+    byMonth.set(derived.month, row);
+  });
+
+  return [...byMonth.values()]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .slice(-Math.max(1, Number(months) || 12));
+}
+
+async function getMonthlyEventCounts(userId, month) {
+  const range = getMonthRange(month);
+  const rows = aggregateMetricEventsByMonth(await getMetricEventSnapshots(userId, range));
+  return rows.get(month) || { month, sentCount: 0, errorCount: 0, campaignCount: 0 };
+}
+
+async function getMonthlyRowsFromEvents(userId, months = 12) {
+  const count = Math.max(1, Number(months) || 12);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - count + 1, 1);
+  const range = { start: start.getTime(), end: Date.now() };
+  return [...aggregateMetricEventsByMonth(await getMetricEventSnapshots(userId, range)).values()]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .slice(-count);
+}
+
+function aggregateMetricEventsByMonth(eventDocs) {
+  const byMonth = new Map();
+
+  eventDocs.forEach(doc => {
+    const data = doc.data() || {};
+    const eventType = getMetricEventType(data);
+    if (eventType !== 'message_sent' && eventType !== 'message_error') return;
+
+    const date = getMetricEventDate(data);
+    if (!date) return;
+    const month = formatMonth(date);
+    const row = byMonth.get(month) || { month, sentCount: 0, errorCount: 0, campaignCount: 0, campaignIds: new Set() };
+    if (eventType === 'message_sent') row.sentCount++;
+    if (eventType === 'message_error') row.errorCount++;
+    if (data.campaignId) row.campaignIds.add(data.campaignId);
+    row.campaignCount = row.campaignIds.size;
+    byMonth.set(month, row);
+  });
+
+  byMonth.forEach(row => {
+    delete row.campaignIds;
+  });
+
+  return byMonth;
+}
+
+function getMonthRange(month) {
+  const parts = String(month || '').split('-').map(Number);
+  const year = parts[0];
+  const monthIndex = (parts[1] || 1) - 1;
+  const start = new Date(year, monthIndex, 1);
+  const end = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+  return { start: start.getTime(), end: end.getTime() };
+}
+
 function getCanonicalUserId(userId) {
   if (userId && typeof userId === 'object') {
     return String(userId.uid || userId.userId || userId.id || 'default').trim() || 'default';
   }
   return String(userId || 'default').trim() || 'default';
+}
+
+function getUserIdFromUserSubcollectionPath(path) {
+  const parts = String(path || '').split('/');
+  return parts[0] === 'users' && parts[1] ? parts[1] : null;
 }
 
 function addAlias(aliases, value) {
@@ -778,7 +915,7 @@ function addAlias(aliases, value) {
   aliases.add(alias);
 }
 
-async function getContactOwnerAliases(userId) {
+async function getFirestoreOwnerAliases(userId) {
   const canonicalUserId = getCanonicalUserId(userId);
   const aliases = new Set();
   addAlias(aliases, canonicalUserId);
@@ -796,7 +933,7 @@ async function getContactOwnerAliases(userId) {
     ].forEach(value => addAlias(aliases, value));
   }
 
-  String(process.env.FIRESTORE_CONTACT_OWNER_ALIASES || '')
+  String(process.env.FIRESTORE_OWNER_ALIASES || process.env.FIRESTORE_CONTACT_OWNER_ALIASES || '')
     .split(',')
     .forEach(value => addAlias(aliases, value));
 
@@ -816,10 +953,14 @@ async function getContactOwnerAliases(userId) {
       ].forEach(value => addAlias(aliases, value));
     }
   } catch (err) {
-    logger.debug({ err: err.message, userId: canonicalUserId }, 'Could not load Firestore user aliases for contacts');
+    logger.debug({ err: err.message, userId: canonicalUserId }, 'Could not load Firestore user aliases');
   }
 
   return [...aliases];
+}
+
+async function getContactOwnerAliases(userId) {
+  return getFirestoreOwnerAliases(userId);
 }
 
 async function getContactCollectionRefs(userId) {
@@ -880,8 +1021,17 @@ async function collectQueryDocs(query, docs) {
     const snap = await query.get();
     snap.forEach(doc => docs.push(doc));
   } catch (err) {
-    logger.debug({ err: err.message }, 'Skipping Firestore contacts query');
+    logger.debug({ err: err.message }, 'Skipping Firestore query');
   }
+}
+
+function dedupeDocsByPath(docs) {
+  const seen = new Set();
+  return docs.filter(doc => {
+    if (!doc?.exists || seen.has(doc.ref.path)) return false;
+    seen.add(doc.ref.path);
+    return true;
+  });
 }
 
 function dedupeContactDocs(docs) {
@@ -1003,6 +1153,16 @@ function phoneMatches(left, right) {
   return !!da && !!db && da === db;
 }
 
+function getMetricEventType(data = {}) {
+  return data.eventType || data.type || data.event_type || null;
+}
+
+function getMetricEventDate(data = {}) {
+  const value = data.createdAt || data.created_at || data.timestamp || data.sentAt || data.errorAt || data.updatedAt;
+  const millis = toMillis(value);
+  return millis ? new Date(millis) : null;
+}
+
 function mapContact(id, data) {
   if (!data) return null;
   const phone = data.phone || data.numero || data.number || data.telefono || data.celular || id;
@@ -1040,10 +1200,10 @@ function mapCampaign(id, data) {
     totalRecipients: data.totalRecipients,
     sentCount: data.sentCount,
     errorCount: data.errorCount,
-    createdAt: data.createdAt ? data.createdAt.toMillis() : null,
-    updatedAt: data.updatedAt ? data.updatedAt.toMillis() : null,
-    startedAt: data.startedAt ? data.startedAt.toMillis() : null,
-    finishedAt: data.finishedAt ? data.finishedAt.toMillis() : null,
+    createdAt: toMillis(data.createdAt),
+    updatedAt: toMillis(data.updatedAt),
+    startedAt: toMillis(data.startedAt),
+    finishedAt: toMillis(data.finishedAt),
   };
 }
 
@@ -1061,10 +1221,10 @@ function mapRecipient(id, data) {
     templateIndex: data.templateIndex,
     attempts: data.attempts,
     errorMessage: data.errorMessage,
-    createdAt: data.createdAt ? data.createdAt.toMillis() : null,
-    updatedAt: data.updatedAt ? data.updatedAt.toMillis() : null,
-    sentAt: data.sentAt ? data.sentAt.toMillis() : null,
-    errorAt: data.errorAt ? data.errorAt.toMillis() : null,
+    createdAt: toMillis(data.createdAt),
+    updatedAt: toMillis(data.updatedAt),
+    sentAt: toMillis(data.sentAt),
+    errorAt: toMillis(data.errorAt),
   };
 }
 
