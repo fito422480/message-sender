@@ -585,75 +585,121 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/css/login.css" />
 </head>
 
 <body>
-  <div class="login-container">
-    <div class="login-card anim-fade-up anim-delay-1">
-      <div class="login-logo anim-fade-up anim-delay-2">
-        <div class="icon-wrapper">
-          <i class="bi bi-chat-dots-fill"></i>
-        </div>
-        <h1>Monchito WA</h1>
-        <p id="loginSubtitle">Inicia sesion para continuar</p>
+  <main class="auth-shell">
+    <section class="auth-splash" aria-label="Monchito WA">
+      <div class="splash-media" aria-hidden="true">
+        <img src="/assets/login-splash.webp" alt="">
       </div>
+      <div class="splash-content">
+        <a class="brand-lockup" href="/" aria-label="Monchito WA">
+          <span class="brand-mark"><i class="bi bi-whatsapp"></i></span>
+          <span>Monchito WA</span>
+        </a>
 
-      <div id="alertBox" class="alert-box"></div>
-
-      <form id="authForm" autocomplete="on">
-        <div class="form-group register-name-field anim-fade-up anim-delay-3" id="nameField">
-          <label for="displayName">Nombre</label>
-          <input type="text" id="displayName" class="form-control" placeholder="Tu nombre" autocomplete="name">
+        <div class="splash-copy">
+          <span class="splash-eyebrow">Workspace activo</span>
+          <h2>Mensajes listos, equipo en control.</h2>
+          <p>Accede a tu panel para continuar con tus contactos, campanas y conversaciones de WhatsApp.</p>
+          <div class="splash-status" aria-hidden="true">
+            <div class="splash-stat">
+              <strong>Seguro</strong>
+              <span>Firebase Auth</span>
+            </div>
+            <div class="splash-stat">
+              <strong>WA</strong>
+              <span>Consola unica</span>
+            </div>
+            <div class="splash-stat">
+              <strong>24/7</strong>
+              <span>Operaciones</span>
+            </div>
+          </div>
         </div>
+      </div>
+    </section>
 
-        <div class="form-group anim-fade-up anim-delay-4">
-          <label for="email">Correo electronico</label>
-          <input type="email" id="email" class="form-control" placeholder="tu@email.com" required autocomplete="email">
-        </div>
+    <section class="auth-panel" aria-label="Acceso">
+      <button type="button" class="theme-login-toggle" id="themeLoginToggle" title="Cambiar tema">
+        <i class="bi bi-moon-fill"></i>
+      </button>
 
-        <div class="form-group anim-fade-up anim-delay-5">
-          <label for="password">Contrasena</label>
-          <div class="password-field">
-            <input type="password" id="password" class="form-control" placeholder="Tu contrasena" required minlength="6" autocomplete="current-password">
-            <button type="button" class="password-toggle" id="togglePassword" title="Mostrar contrasena">
-              <i class="bi bi-eye"></i>
+      <div class="login-container">
+        <div class="login-card anim-fade-up anim-delay-1">
+          <div class="login-logo anim-fade-up anim-delay-2">
+            <div class="icon-wrapper">
+              <i class="bi bi-chat-dots-fill"></i>
+            </div>
+            <div>
+              <span class="login-kicker">Acceso seguro</span>
+              <h1>Monchito WA</h1>
+              <p id="loginSubtitle">Inicia sesion para continuar</p>
+            </div>
+          </div>
+
+          <div id="alertBox" class="alert-box"></div>
+
+          <form id="authForm" autocomplete="on">
+            <div class="form-group register-name-field anim-fade-up anim-delay-3" id="nameField">
+              <label for="displayName">Nombre</label>
+              <input type="text" id="displayName" class="form-control" placeholder="Tu nombre" autocomplete="name">
+            </div>
+
+            <div class="form-group anim-fade-up anim-delay-4">
+              <label for="email">Correo electronico</label>
+              <input type="email" id="email" class="form-control" placeholder="tu@email.com" required autocomplete="email" autocapitalize="none" spellcheck="false">
+            </div>
+
+            <div class="form-group anim-fade-up anim-delay-5">
+              <label for="password">Contrasena</label>
+              <div class="password-field">
+                <input type="password" id="password" class="form-control" placeholder="Tu contrasena" required minlength="6" autocomplete="current-password">
+                <button type="button" class="password-toggle" id="togglePassword" title="Mostrar contrasena">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="terms-check anim-fade-up anim-delay-6" id="termsCheck">
+              <input type="checkbox" id="acceptTerms">
+              <label for="acceptTerms">Acepto los <a href="/terms.html" target="_blank">Terminos y Condiciones</a> y la <a href="/terms.html#data-collection" target="_blank">Politica de Privacidad</a></label>
+            </div>
+
+            <button type="submit" class="btn-primary anim-fade-up anim-delay-6" id="submitBtn">
+              <span id="submitText">Iniciar sesion</span>
             </button>
+          </form>
+
+          <div class="divider anim-fade-in anim-delay-7">o</div>
+
+          <button type="button" class="btn-google anim-fade-up anim-delay-7" id="googleBtn">
+            <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.01 24.01 0 0 0 0 21.56l7.98-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.48 48 24 48z"/></svg>
+            Continuar con Google
+          </button>
+
+          <div class="toggle-mode anim-fade-in anim-delay-8">
+            <span id="toggleText">No tienes cuenta? </span>
+            <a id="toggleLink" onclick="toggleAuthMode()">Crear cuenta</a>
           </div>
         </div>
 
-        <div class="terms-check anim-fade-up anim-delay-6" id="termsCheck">
-          <input type="checkbox" id="acceptTerms">
-          <label for="acceptTerms">Acepto los <a href="/terms.html" target="_blank">Terminos y Condiciones</a> y la <a href="/terms.html#data-collection" target="_blank">Politica de Privacidad</a></label>
+        <div class="auth-footer">
+          <div class="footer-text anim-fade-up anim-delay-8">
+            <a href="/terms.html" target="_blank">Terminos y Condiciones</a>
+            &middot;
+            <a href="/terms.html#data-collection" target="_blank">Politica de Privacidad</a>
+          </div>
+          <div class="footer-text anim-fade-up anim-delay-8" style="margin-top:0.5rem;">
+            <a href="https://adolfoayala.vercel.app/" target="_blank">fito</a>
+            &middot; Desarrollado por Fito
+          </div>
         </div>
-
-        <button type="submit" class="btn-primary anim-fade-up anim-delay-6" id="submitBtn">
-          <span id="submitText">Iniciar sesion</span>
-        </button>
-      </form>
-
-      <div class="divider anim-fade-in anim-delay-7">o</div>
-
-      <button type="button" class="btn-google anim-fade-up anim-delay-7" id="googleBtn">
-        <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.01 24.01 0 0 0 0 21.56l7.98-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.48 48 24 48z"/></svg>
-        Continuar con Google
-      </button>
-
-      <div class="toggle-mode anim-fade-in anim-delay-8">
-        <span id="toggleText">No tienes cuenta? </span>
-        <a id="toggleLink" onclick="toggleAuthMode()">Crear cuenta</a>
       </div>
-    </div>
-
-    <div class="footer-text anim-fade-up anim-delay-8">
-      <a href="/terms.html" target="_blank">Terminos y Condiciones</a>
-      &middot;
-      <a href="/terms.html#data-collection" target="_blank">Politica de Privacidad</a>
-    </div>
-    <div class="footer-text anim-fade-up anim-delay-8" style="margin-top:0.5rem;">
-      <a href="https://adolfoayala.vercel.app/" target="_blank">fito</a>
-      &middot; Desarrollado por Fito
-    </div>
-  </div>
+    </section>
+  </main>
 
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
@@ -691,6 +737,24 @@
     // Apply saved theme (before Firebase loads)
     var savedTheme = localStorage.getItem('theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
+    var themeLoginToggle = document.getElementById('themeLoginToggle');
+
+    function syncLoginThemeIcon() {
+      if (!themeLoginToggle) return;
+      var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      var icon = themeLoginToggle.querySelector('i');
+      if (icon) icon.className = isLight ? 'bi bi-sun-fill' : 'bi bi-moon-fill';
+    }
+
+    if (themeLoginToggle) {
+      themeLoginToggle.addEventListener('click', function() {
+        var nextTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', nextTheme);
+        localStorage.setItem('theme', nextTheme);
+        syncLoginThemeIcon();
+      });
+      syncLoginThemeIcon();
+    }
 
     function initLoginPage() {
 
