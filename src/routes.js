@@ -266,12 +266,9 @@ function buildRoutes() {
         });
       }
 
-      // Validate country is configured
-      if (!req.userProfile?.country) {
-        return res.status(400).json({
-          error: 'country_required',
-          message: 'Debes configurar tu país antes de enviar mensajes'
-        });
+      const userCountry = req.userProfile?.country || 'PY';
+      if (req.userProfile && !req.userProfile.country) {
+        req.userProfile.country = userCountry;
       }
 
       const userId = req.auth?.uid || 'default';
@@ -333,7 +330,6 @@ function buildRoutes() {
         }
         
         const csvFilePath = req.files['csvFile'][0].path;
-        const userCountry = req.userProfile?.country || 'PY';
         const parsed = await loadNumbersFromCSV(csvFilePath, userCountry);
         invalidCount = parsed?.invalidCount || 0;
         duplicates = parsed?.duplicates || 0;
@@ -1149,7 +1145,18 @@ function buildRoutes() {
     try {
       const profile = req.userProfile;
       if (!profile) {
-        return res.status(404).json({ error: 'Profile not found' });
+        return res.json({
+          uid: req.auth?.uid || 'default',
+          email: req.auth?.email || '',
+          displayName: req.auth?.name || '',
+          plan: 'active',
+          role: req.auth?.email === 'adolfo.andres.ayala@gmail.com' ? 'admin' : 'user',
+          status: 'active',
+          trialDaysLeft: 0,
+          whatsappPhone: null,
+          country: 'PY',
+          createdAt: null
+        });
       }
 
       // Calculate trialDaysLeft

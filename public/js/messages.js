@@ -525,7 +525,13 @@ async function sendMessages() {
 
   // Block sending if country not confirmed
   var countryConfirmed = localStorage.getItem('countryConfirmed');
-  var profileCountry = window.userProfile && window.userProfile.country;
+  var profileCountry = typeof getUserCountry === 'function'
+    ? getUserCountry()
+    : ((window.userProfile && window.userProfile.country) || 'PY');
+  if (!countryConfirmed || countryConfirmed === 'undefined' || countryConfirmed === 'null') {
+    localStorage.setItem('countryConfirmed', profileCountry);
+    countryConfirmed = profileCountry;
+  }
   if (!profileCountry || !countryConfirmed) {
     showAlert('Debes seleccionar tu pais antes de enviar mensajes', 'warning');
     if (typeof showCountryChangeModal === 'function') {

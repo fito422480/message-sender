@@ -572,6 +572,7 @@ function loadUserProfile() {
     })
     .then(function(profile) {
       if (!profile) return;
+      profile.country = normalizeCountryCode(profile.country);
       userProfile = profile;
       window.userProfile = profile;
       updateTrialBadge(profile);
@@ -635,18 +636,80 @@ var COUNTRY_FLAGS = {
   ES: '\u{1F1EA}\u{1F1F8}'
 };
 
+var DEFAULT_COUNTRY = 'PY';
+var FALLBACK_COUNTRY_CONFIGS = {
+  PY: { code: '595', name: 'Paraguay', totalLength: 12 },
+  AR: { code: '54', name: 'Argentina', totalLength: 12 },
+  BR: { code: '55', name: 'Brasil', totalLength: 13 },
+  CL: { code: '56', name: 'Chile', totalLength: 11 },
+  UY: { code: '598', name: 'Uruguay', totalLength: 11 },
+  CO: { code: '57', name: 'Colombia', totalLength: 12 },
+  PE: { code: '51', name: 'Peru', totalLength: 11 },
+  EC: { code: '593', name: 'Ecuador', totalLength: 12 },
+  BO: { code: '591', name: 'Bolivia', totalLength: 11 },
+  VE: { code: '58', name: 'Venezuela', totalLength: 12 },
+  MX: { code: '52', name: 'Mexico', totalLength: 12 },
+  US: { code: '1', name: 'Estados Unidos', totalLength: 11 },
+  ES: { code: '34', name: 'Espana', totalLength: 11 }
+};
+
+function normalizeCountryCode(country) {
+  var code = String(country || '').trim().toUpperCase();
+  if (!code || code === 'UNDEFINED' || code === 'NULL') return DEFAULT_COUNTRY;
+  if (COUNTRY_FLAGS[code] || FALLBACK_COUNTRY_CONFIGS[code]) return code;
+  return DEFAULT_COUNTRY;
+}
+
+function copyFallbackCountryConfigs() {
+  var copy = {};
+  Object.keys(FALLBACK_COUNTRY_CONFIGS).forEach(function(code) {
+    copy[code] = Object.assign({}, FALLBACK_COUNTRY_CONFIGS[code]);
+  });
+  return copy;
+}
+
+function mergeCountryConfigs(countries) {
+  var merged = copyFallbackCountryConfigs();
+  if (countries && typeof countries === 'object') {
+    Object.keys(countries).forEach(function(code) {
+      var normalizedCode = normalizeCountryCode(code);
+      var incoming = countries[code] || {};
+      merged[normalizedCode] = Object.assign({}, merged[normalizedCode] || {}, incoming);
+    });
+  }
+  return merged;
+}
+
+function ensureUserProfileCountry(country) {
+  var normalized = normalizeCountryCode(country || (window.userProfile && window.userProfile.country));
+  if (!window.userProfile) window.userProfile = {};
+  window.userProfile.country = normalized;
+  userProfile = window.userProfile;
+  return normalized;
+}
+
+function getCountryConfigSync(country) {
+  var code = normalizeCountryCode(country);
+  if (_countryConfigsCache && _countryConfigsCache[code]) return _countryConfigsCache[code];
+  return FALLBACK_COUNTRY_CONFIGS[code] || FALLBACK_COUNTRY_CONFIGS[DEFAULT_COUNTRY];
+}
+
 /**
  * Check if country selection is needed and show modal if so.
  * Returns a promise that resolves when country is confirmed.
  */
 function checkCountrySelection() {
   return new Promise(function(resolve) {
-    var confirmed = localStorage.getItem('countryConfirmed');
-    if (confirmed) {
+    var profileCountry = ensureUserProfileCountry();
+    var rawConfirmed = localStorage.getItem('countryConfirmed');
+    if (rawConfirmed && rawConfirmed !== 'undefined' && rawConfirmed !== 'null') {
+      localStorage.setItem('countryConfirmed', profileCountry);
+      ensureUserProfileCountry(profileCountry);
       updateCountryIndicator();
       resolve();
       return;
     }
+    localStorage.removeItem('countryConfirmed');
     showCountrySelectorModal(resolve);
   });
 }
@@ -690,14 +753,15 @@ function showCountrySelectorModal(onConfirm) {
       var select = document.getElementById('countrySelectDropdown');
       if (!select) return;
 
-      var currentCountry = (window.userProfile && window.userProfile.country) || '';
+      countries = mergeCountryConfigs(countries);
+      var currentCountry = ensureUserProfileCountry();
 
-      Object.keys(countries).forEach(function(code) {
-        var c = countries[code];
+      Object.keys(countries).sort().forEach(function(code) {
+        var c = countries[code] || getCountryConfigSync(code);
         var flag = COUNTRY_FLAGS[code] || '';
         var option = document.createElement('option');
         option.value = code;
-        option.textContent = flag + ' ' + c.name + ' (+' + c.code + ')';
+        option.textContent = flag + ' ' + (c.name || code) + ' (+' + (c.code || getCountryConfigSync(code).code) + ')';
         if (code === currentCountry) {
           option.selected = true;
         }
@@ -807,14 +871,15 @@ function showCountryChangeModal() {
       var select = document.getElementById('countryChangeDropdown');
       if (!select) return;
 
-      var currentCountry = (window.userProfile && window.userProfile.country) || 'PY';
+      countries = mergeCountryConfigs(countries);
+      var currentCountry = ensureUserProfileCountry();
 
-      Object.keys(countries).forEach(function(code) {
-        var c = countries[code];
+      Object.keys(countries).sort().forEach(function(code) {
+        var c = countries[code] || getCountryConfigSync(code);
         var flag = COUNTRY_FLAGS[code] || '';
         var option = document.createElement('option');
         option.value = code;
-        option.textContent = flag + ' ' + c.name + ' (+' + c.code + ')';
+        option.textContent = flag + ' ' + (c.name || code) + ' (+' + (c.code || getCountryConfigSync(code).code) + ')';
         if (code === currentCountry) {
           option.selected = true;
         }
@@ -884,7 +949,7 @@ function showCountryChangeModal() {
  * Update the country indicator in the navbar.
  */
 function updateCountryIndicator() {
-  var country = (window.userProfile && window.userProfile.country) || 'PY';
+  var country = ensureUserProfileCountry();
   var flag = COUNTRY_FLAGS[country] || '';
 
   var flagEl = document.getElementById('country-flag');
@@ -911,15 +976,13 @@ function updateCountryIndicator() {
  * Update country info badges in contacts and send tabs.
  */
 function updateCountryInfoBadges() {
-  var country = (window.userProfile && window.userProfile.country) || 'PY';
+  var country = ensureUserProfileCountry();
   var flag = COUNTRY_FLAGS[country] || '';
 
   // Fetch country details for prefix
-  authFetch('/phone/countries')
-    .then(function(res) { return res.json(); })
+  getCountryConfigs()
     .then(function(countries) {
-      var config = countries[country];
-      if (!config) return;
+      var config = countries[country] || getCountryConfigSync(country);
 
       // Send tab badge
       var sendBadge = document.getElementById('send-country-info');
@@ -942,7 +1005,23 @@ function updateCountryInfoBadges() {
       }
     })
     .catch(function() {
-      // Silently fail — non-critical UI update
+      var config = getCountryConfigSync(country);
+      var sendBadge = document.getElementById('send-country-info');
+      var sendFlag = document.getElementById('send-country-flag');
+      var sendPrefix = document.getElementById('send-country-prefix');
+      if (sendBadge) {
+        sendBadge.classList.remove('d-none');
+        if (sendFlag) sendFlag.textContent = flag;
+        if (sendPrefix) sendPrefix.textContent = 'Prefijo: +' + config.code;
+      }
+      var contactsBadge = document.getElementById('contacts-country-info');
+      var contactsFlag = document.getElementById('contacts-country-flag');
+      var contactsText = document.getElementById('contacts-country-text');
+      if (contactsBadge) {
+        contactsBadge.classList.remove('d-none');
+        if (contactsFlag) contactsFlag.textContent = flag;
+        if (contactsText) contactsText.textContent = 'Validacion: ' + config.name + ' (+' + config.code + ')';
+      }
     });
 }
 
@@ -1006,11 +1085,11 @@ function updateProfileDropdown() {
   if (emailEl) emailEl.textContent = (user && user.email) || '';
 
   // Country
-  var country = (profile && profile.country) || '';
+  var country = ensureUserProfileCountry(profile && profile.country);
   var flagEl = document.getElementById('profile-country-flag');
   var nameCountryEl = document.getElementById('profile-country-name');
-  if (flagEl) flagEl.textContent = country ? (COUNTRY_FLAGS[country] || '') : '';
-  if (nameCountryEl) nameCountryEl.textContent = country || 'No configurado';
+  if (flagEl) flagEl.textContent = COUNTRY_FLAGS[country] || '';
+  if (nameCountryEl) nameCountryEl.textContent = country;
 
   // Plan badge
   var planBadge = document.getElementById('profile-plan-badge');
@@ -1043,8 +1122,12 @@ function getCountryConfigs() {
   return authFetch('/phone/countries')
     .then(function(res) { return res.json(); })
     .then(function(countries) {
-      _countryConfigsCache = countries;
-      return countries;
+      _countryConfigsCache = mergeCountryConfigs(countries);
+      return _countryConfigsCache;
+    })
+    .catch(function() {
+      _countryConfigsCache = copyFallbackCountryConfigs();
+      return _countryConfigsCache;
     });
 }
 
@@ -1053,7 +1136,7 @@ function getCountryConfigs() {
  * @returns {string}
  */
 function getUserCountry() {
-  return (window.userProfile && window.userProfile.country) || 'PY';
+  return ensureUserProfileCountry();
 }
 
 /**
@@ -1066,13 +1149,7 @@ function getCountryDialCode() {
   if (_countryConfigsCache && _countryConfigsCache[country]) {
     return _countryConfigsCache[country].code;
   }
-  // Fallback map for common codes
-  var fallback = {
-    PY: '595', AR: '54', BR: '55', CL: '56', UY: '598',
-    CO: '57', PE: '51', EC: '593', BO: '591', VE: '58',
-    MX: '52', US: '1', ES: '34'
-  };
-  return fallback[country] || '595';
+  return getCountryConfigSync(country).code || '595';
 }
 
 /**
