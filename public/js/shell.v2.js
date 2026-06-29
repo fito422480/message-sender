@@ -16,7 +16,6 @@
     { label: null }, // group divider
     { tab: "templates", icon: "bi-chat-square-text", label: "Plantillas" },
     { tab: "campaigns", icon: "bi-megaphone", label: "Campañas" },
-    { tab: "plans", icon: "bi-credit-card", label: "Planes" },
     { tab: "api", icon: "bi-code-slash", label: "API" },
     { tab: "admin", icon: "bi-shield-lock", label: "Admin", adminOnly: true },
   ];

@@ -213,7 +213,7 @@ describe('POST /user/api-key', () => {
     }));
     jest.mock('../src/auth/index', () => ({
       getAuthState: jest.fn().mockResolvedValue({ state: {}, saveCreds: jest.fn(), clear: jest.fn() }),
-    }));
+    }), { virtual: true });
     jest.mock('../src/media', () => ({
       upload: {
         single: () => (req, res, next) => next(),
@@ -221,7 +221,7 @@ describe('POST /user/api-key', () => {
         array: () => (req, res, next) => next(),
       },
     }));
-    jest.mock('qrcode', () => ({ toDataURL: jest.fn(), toFile: jest.fn() }));
+    jest.mock('qrcode', () => ({ toDataURL: jest.fn(), toFile: jest.fn() }), { virtual: true });
     jest.mock('../src/queueRedis', () => ({
       addMessage: jest.fn(),
       addBulkMessages: jest.fn(),
@@ -258,7 +258,7 @@ describe('POST /user/api-key', () => {
     jest.mock('@whiskeysockets/baileys', () => ({
       default: jest.fn(),
       DisconnectReason: { loggedOut: 401 },
-    }));
+    }), { virtual: true });
     jest.mock('../src/queue', () => ({
       MessageQueue: jest.fn().mockImplementation(() => ({})),
     }));
@@ -280,7 +280,7 @@ describe('POST /user/api-key', () => {
     expect(typeof res.body.apiKey).toBe('string');
   });
 
-  test('rejects trial users (plan !== active, role !== admin)', async () => {
+  test('allows trial users to generate API keys', async () => {
     process.env.NODE_ENV = 'production';
     jest.resetModules();
 
@@ -292,7 +292,7 @@ describe('POST /user/api-key', () => {
     }));
     jest.mock('../src/auth/index', () => ({
       getAuthState: jest.fn().mockResolvedValue({ state: {}, saveCreds: jest.fn(), clear: jest.fn() }),
-    }));
+    }), { virtual: true });
     jest.mock('../src/media', () => ({
       upload: {
         single: () => (req, res, next) => next(),
@@ -300,7 +300,7 @@ describe('POST /user/api-key', () => {
         array: () => (req, res, next) => next(),
       },
     }));
-    jest.mock('qrcode', () => ({ toDataURL: jest.fn(), toFile: jest.fn() }));
+    jest.mock('qrcode', () => ({ toDataURL: jest.fn(), toFile: jest.fn() }), { virtual: true });
     jest.mock('../src/queueRedis', () => ({
       addMessage: jest.fn(),
       addBulkMessages: jest.fn(),
@@ -344,7 +344,7 @@ describe('POST /user/api-key', () => {
     jest.mock('@whiskeysockets/baileys', () => ({
       default: jest.fn(),
       DisconnectReason: { loggedOut: 401 },
-    }));
+    }), { virtual: true });
     jest.mock('../src/queue', () => ({
       MessageQueue: jest.fn().mockImplementation(() => ({})),
     }));
@@ -360,7 +360,8 @@ describe('POST /user/api-key', () => {
 
     const res = await requestWithHeaders(routerApp, 'POST', '/user/api-key', {});
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/professional|enterprise|plan/i);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(typeof res.body.apiKey).toBe('string');
   });
 });

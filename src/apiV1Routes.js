@@ -1,5 +1,5 @@
 /**
- * API v1 Routes — Public API for Profesional, Premium and Enterprise plan users.
+ * API v1 Routes — Public API access for authenticated API key users.
  * Authentication via API Key → Bearer token (separate from Firebase JWT).
  */
 const express = require('express');
@@ -11,7 +11,6 @@ const metricsStore = require('./metricsStore');
 const redisQueue = require('./queueRedis');
 const { ALLOWED_INTERVALS, DEFAULT_INTERVAL } = require('./queueRedis');
 const sessionManager = require('./sessionManager');
-const { canUseProfessionalFeatures } = require('./middleware/planGate');
 
 // In-memory token store: token → { uid, createdAt, expiresAt }
 // In production this should be Redis-backed; good enough for MVP.
@@ -46,22 +45,10 @@ function apiAuth(req, res, next) {
 }
 
 // ────────────────────────────────────────────
-// Helper: check plan allows API access
+// Helper kept for compatibility; plan restrictions are disabled.
 // ────────────────────────────────────────────
 async function requireApiPlan(uid) {
-  const { db } = require('./firebaseAdmin');
-  if (!db) return null; // dev mode — allow
-
-  const snap = await db.collection('users').doc(uid).get();
-  if (!snap.exists) return 'User not found';
-
-  const profile = snap.data();
-  const plan = profile.plan;
-  const role = profile.role;
-
-  if (canUseProfessionalFeatures(plan, role)) return null;
-
-  return 'API access requires Profesional, Premium or Enterprise plan';
+  return null;
 }
 
 // ────────────────────────────────────────────
@@ -116,7 +103,7 @@ function buildApiV1Routes() {
       const uid = userDoc.id;
       const profile = userDoc.data();
 
-      // Check plan
+      // Plan checks are disabled.
       const planError = await requireApiPlan(uid);
       if (planError) {
         return res.status(403).json({ error: planError });

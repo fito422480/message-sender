@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Initial tab from hash or default to dashboard
   const hash = window.location.hash.substring(1);
-  const validTabs = ['dashboard', 'whatsapp', 'send', 'templates', 'contacts', 'campaigns', 'inbox', 'plans', 'chatbot', 'api', 'admin'];
+  const validTabs = ['dashboard', 'whatsapp', 'send', 'templates', 'contacts', 'campaigns', 'inbox', 'chatbot', 'api', 'admin'];
   const initialTab = validTabs.includes(hash) ? hash : 'dashboard';
   showTab(initialTab);
   

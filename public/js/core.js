@@ -96,7 +96,7 @@ async function authFetch(url, options) {
     }
   }
 
-  // Intercept 403 trial/account/verification errors
+  // Intercept account/verification errors
   if (response.status === 403) {
     try {
       var cloned = response.clone();
@@ -107,16 +107,10 @@ async function authFetch(url, options) {
         if (freshUser) {
           showEmailVerificationBlock(freshUser);
         }
-      } else if (body.error === 'trial_expired') {
-        showTrialExpiredModal(body.trialEndsAt);
-      } else if (body.error === 'account_inactive') {
-        showTrialExpiredModal(null, true);
       } else if (body.error === 'account_suspended') {
         showAccountBlockedModal('suspended', body.message);
       } else if (body.error === 'account_disabled') {
         showAccountBlockedModal('disabled', body.message);
-      } else if (body.error === 'plan_restricted' || body.error === 'plan_limit_reached') {
-        showPlanUpgradeModal(body.feature, body.message, body.currentPlan);
       }
     } catch (e) {
       // ignore parse errors
@@ -599,65 +593,9 @@ function updateTrialBadge(profile) {
     return;
   }
 
-  var paidPlanNames = {
-    'active': 'Plan Activo',
-    'basico': 'Basico',
-    'profesional': 'Profesional',
-    'premium': 'Premium',
-    'enterprise': 'Enterprise'
-  };
-
-  if (paidPlanNames[profile.plan]) {
-    badge.innerHTML = '<i class="bi bi-check-circle"></i> ' + paidPlanNames[profile.plan];
-    badge.className = 'trial-badge badge-active';
-    badge.classList.remove('d-none');
-    return;
-  }
-
-  if (profile.plan === 'trial' && profile.trialDaysLeft > 0) {
-    badge.innerHTML = '<i class="bi bi-clock"></i> Prueba: ' + profile.trialDaysLeft + ' dias';
-    badge.className = 'trial-badge badge-trial';
-    if (profile.trialDaysLeft <= 3) {
-      badge.className += ' badge-trial-urgent';
-    }
-    badge.classList.remove('d-none');
-    return;
-  }
-
-  if (profile.plan === 'expired' || (profile.plan === 'trial' && profile.trialDaysLeft <= 0)) {
-    badge.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Expirado';
-    badge.className = 'trial-badge badge-expired';
-    badge.classList.remove('d-none');
-    showTrialExpiredModal(null, profile.plan === 'expired');
-    return;
-  }
-}
-
-function showTrialExpiredModal(trialEndsAt, isInactive) {
-  // Remove existing modal if any
-  var existing = document.getElementById('trial-expired-modal');
-  if (existing) existing.remove();
-
-  var title = isInactive ? 'Cuenta Inactiva' : 'Periodo de Prueba Expirado';
-  var message = isInactive
-    ? 'Tu cuenta esta inactiva. Contacta al administrador para activar tu plan.'
-    : 'Tu periodo de prueba ha expirado. Contacta al administrador para continuar usando el servicio.';
-
-  var modal = document.createElement('div');
-  modal.id = 'trial-expired-modal';
-  modal.className = 'trial-modal-overlay';
-  modal.innerHTML =
-    '<div class="trial-modal-card">' +
-      '<div class="trial-modal-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>' +
-      '<h2>' + title + '</h2>' +
-      '<p>' + message + '</p>' +
-      (trialEndsAt ? '<p class="trial-date">Expiro: ' + new Date(trialEndsAt).toLocaleDateString() + '</p>' : '') +
-      '<div class="trial-modal-actions">' +
-        '<button class="btn-primary" onclick="logout()">Cerrar Sesion</button>' +
-      '</div>' +
-    '</div>';
-
-  document.body.appendChild(modal);
+  badge.innerHTML = '<i class="bi bi-check-circle"></i> Acceso activo';
+  badge.className = 'trial-badge badge-active';
+  badge.classList.remove('d-none');
 }
 
 // Account blocked modal (suspended/disabled)
@@ -1080,17 +1018,9 @@ function updateProfileDropdown() {
     if (profile.role === 'admin') {
       planBadge.textContent = 'Admin';
       planBadge.className = 'profile-plan-badge plan-admin';
-    } else if (['active', 'basico', 'profesional', 'premium', 'enterprise'].indexOf(profile.plan) !== -1) {
-      var dropdownPlanNames = { active: 'Plan Activo', basico: 'Basico', profesional: 'Profesional', premium: 'Premium', enterprise: 'Enterprise' };
-      planBadge.textContent = dropdownPlanNames[profile.plan] || 'Plan Activo';
-      planBadge.className = 'profile-plan-badge plan-active';
-    } else if (profile.plan === 'trial') {
-      var days = profile.trialDaysLeft || 0;
-      planBadge.textContent = 'Prueba: ' + days + ' dias';
-      planBadge.className = 'profile-plan-badge plan-trial';
     } else {
-      planBadge.textContent = 'Expirado';
-      planBadge.className = 'profile-plan-badge plan-expired';
+      planBadge.textContent = 'Acceso activo';
+      planBadge.className = 'profile-plan-badge plan-active';
     }
   }
 }
@@ -1200,12 +1130,12 @@ function updatePhonePlaceholders() {
   });
 }
 
-// ========== Plan Feature Gating ==========
+// ========== Access Capabilities ==========
 
 var planFeatures = null;
 
 /**
- * Load the user's plan features from the backend.
+ * Load access capabilities from the backend.
  * Call after loadUserProfile().
  */
 function loadPlanFeatures() {
@@ -1227,7 +1157,7 @@ function loadPlanFeatures() {
 }
 
 /**
- * Check if a boolean feature is available in the current plan.
+ * Check if a boolean feature is available.
  * Frontend restriction removed: always allow.
  * @param {string} featureName - e.g. 'chatbot', 'inbox', 'api', 'campaigns'
  * @returns {boolean}
@@ -1237,7 +1167,7 @@ function checkFeature(featureName) {
 }
 
 /**
- * Check a numeric limit feature.
+ * Check a numeric limit capability.
  * Frontend restriction removed: always unlimited.
  * @param {string} limitName - e.g. 'send', 'contacts', 'templates'
  * @returns {{ limit: number, used: number, remaining: number, unlimited: boolean }}
@@ -1247,13 +1177,13 @@ function checkLimit(limitName) {
 }
 
 /**
- * Apply plan restrictions to the UI.
+ * Apply access capability data to the UI.
  * Restrictions removed: no tabs are locked and no lock icons are added.
  */
 function applyPlanRestrictions(data) {
   if (!data) return;
 
-  // Keep the plan data available globally, but do not block the interface.
+  // Keep the capability data available globally, but do not block the interface.
   planFeatures = data;
   window.planFeatures = data;
 
@@ -1270,7 +1200,7 @@ function applyPlanRestrictions(data) {
 }
 
 /**
- * Update the trial badge to show the actual plan name.
+ * Update the access badge.
  */
 function updatePlanBadge(plan, role) {
   var badge = document.getElementById('trial-badge');
@@ -1278,31 +1208,9 @@ function updatePlanBadge(plan, role) {
 
   if (role === 'admin') return; // admin badge already handled
 
-  var planNames = {
-    'basico': 'Basico',
-    'profesional': 'Profesional',
-    'premium': 'Premium',
-    'enterprise': 'Enterprise',
-    'active': 'Plan Activo'
-  };
-
-  if (planNames[plan]) {
-    badge.innerHTML = '<i class="bi bi-check-circle"></i> ' + planNames[plan];
-    badge.className = 'trial-badge badge-active';
-    badge.classList.remove('d-none');
-  }
-}
-
-/**
- * Show upgrade modal when a restricted feature is accessed.
- * Popup removed: no modal is shown.
- */
-function showPlanUpgradeModal(feature, message, currentPlan) {
-  console.warn("Funcion restringida ignorada:", {
-    feature: feature,
-    message: message,
-    currentPlan: currentPlan,
-  });
+  badge.innerHTML = '<i class="bi bi-check-circle"></i> Acceso activo';
+  badge.className = 'trial-badge badge-active';
+  badge.classList.remove('d-none');
 }
 
 // Global exports
@@ -1315,7 +1223,6 @@ window.getChartTextColor = getChartTextColor;
 window.logout = logout;
 window.initFirebaseAuth = initFirebaseAuth;
 window.loadUserProfile = loadUserProfile;
-window.showTrialExpiredModal = showTrialExpiredModal;
 window.createAppSession = createAppSession;
 window.showSessionConflictModal = showSessionConflictModal;
 window.showAccountBlockedModal = showAccountBlockedModal;
@@ -1336,5 +1243,4 @@ window.loadPlanFeatures = loadPlanFeatures;
 window.checkFeature = checkFeature;
 window.checkLimit = checkLimit;
 window.planFeatures = planFeatures;
-window.showPlanUpgradeModal = showPlanUpgradeModal;
 window.applyPlanRestrictions = applyPlanRestrictions;

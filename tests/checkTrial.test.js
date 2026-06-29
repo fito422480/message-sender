@@ -84,9 +84,8 @@ describe('checkTrial middleware', () => {
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  test('trial users with expired trial get 403 trial_expired', async () => {
+  test('trial users with expired trial pass through', async () => {
     const pastDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000); // 1 day ago
-    mockUpdate.mockResolvedValueOnce(undefined);
 
     const req = {
       auth: { uid: 'user-3' },
@@ -97,19 +96,12 @@ describe('checkTrial middleware', () => {
 
     await checkTrial(req, res, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'trial_expired',
-        message: 'Tu periodo de prueba ha expirado',
-      })
-    );
-    // Should also update Firestore to mark plan as expired
-    expect(mockUpdate).toHaveBeenCalledWith({ plan: 'expired' });
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  test('expired plan users get 403 account_inactive', async () => {
+  test('expired plan users pass through', async () => {
     const req = {
       auth: { uid: 'user-4' },
       userProfile: { uid: 'user-4', role: 'user', plan: 'expired' },
@@ -119,11 +111,25 @@ describe('checkTrial middleware', () => {
 
     await checkTrial(req, res, next);
 
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  test('suspended users are still blocked', async () => {
+    const req = {
+      auth: { uid: 'user-suspended' },
+      userProfile: { uid: 'user-suspended', role: 'user', plan: 'active', status: 'suspended' },
+    };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await checkTrial(req, res, next);
+
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({
-      error: 'account_inactive',
-      message: 'Tu cuenta esta inactiva',
+      error: 'account_suspended',
+      message: 'Tu cuenta ha sido suspendida',
     });
   });
 

@@ -16,7 +16,7 @@ const { checkTrial } = require('./middleware/checkTrial');
 const { sessionGuard, createSession, clearSession } = require('./middleware/sessionGuard');
 const { ensureEmailVerified } = require('./middleware/ensureEmailVerified');
 const { admin, db, auth } = require('./firebaseAdmin');
-const { requireFeature, requireLimit, getPlanFeatures, canUseProfessionalFeatures } = require('./middleware/planGate');
+const { requireFeature, requireLimit, getPlanFeatures } = require('./middleware/planGate');
 
 // Map para rastrear operaciones de refresh-qr en progreso por usuario
 const qrRefreshInProgress = new Map();
@@ -194,12 +194,8 @@ function buildRoutes() {
 
   // Intervalos de envío disponibles para el usuario
   router.get('/config/intervals', conditionalAuth, (req, res) => {
-    const userRole = req.userProfile?.role;
-    const userPlan = req.userProfile?.plan;
-    const canUseFast = canUseProfessionalFeatures(userPlan, userRole);
-
     const intervals = [
-      { value: 3,  label: 'Rapido (3s)', badge: '\u26A0\uFE0F', color: 'warning', restricted: true,  available: canUseFast },
+      { value: 3,  label: 'Rapido (3s)', badge: '\u26A0\uFE0F', color: 'warning', restricted: false, available: true },
       { value: 5,  label: 'Normal (5s)', badge: '\u2713',       color: 'success', restricted: false, available: true, default: true },
       { value: 8,  label: 'Seguro (8s)', badge: '\u2713\u2713',       color: 'info',    restricted: false, available: true },
       { value: 12, label: 'Muy seguro (12s)', badge: '\u2713\u2713\u2713',   color: 'info',    restricted: false, available: true },
@@ -288,16 +284,7 @@ function buildRoutes() {
       if (!allowedIntervals.includes(messageInterval)) {
         messageInterval = defaultInterval;
       }
-      // 3s interval restricted to Profesional plans and above.
-      if (messageInterval === 3) {
-        const userRole = req.userProfile?.role;
-        const userPlan = req.userProfile?.plan;
-        const isAllowed = canUseProfessionalFeatures(userPlan, userRole);
-        if (!isAllowed) {
-          messageInterval = defaultInterval;
-        }
-      }
-      
+
       let numbers = [];
       let source = recipientSource || 'csv';
       let importSummary = null;
@@ -437,27 +424,6 @@ function buildRoutes() {
         source
       }, 'Procesando envío con templates múltiples');
 
-      // Check monthly send limit
-      if (req.planLimit && req.planLimit !== -1) {
-        try {
-          const monthData = await metricsStore.dashboardCurrentMonth(userId);
-          const sentThisMonth = (monthData && (monthData.sent || monthData.totalSent || 0)) || 0;
-          if (sentThisMonth + numbers.length > req.planLimit) {
-            const remaining = Math.max(0, req.planLimit - sentThisMonth);
-            return res.status(403).json({
-              error: 'plan_limit_reached',
-              feature: 'send',
-              message: `Límite mensual de envíos alcanzado. Tu plan permite ${req.planLimit} mensajes/mes. Enviados: ${sentThisMonth}. Restantes: ${remaining}.`,
-              limit: req.planLimit,
-              used: sentThisMonth,
-              remaining
-            });
-          }
-        } catch (limitErr) {
-          logger.warn({ err: limitErr.message, userId }, 'Could not check send limit, allowing');
-        }
-      }
-
       // Crear campaña persistente
       const campaign = await metricsStore.createCampaign(userId, {
         name: campaignName || `Campaña ${new Date().toLocaleString()}`,
@@ -576,25 +542,6 @@ function buildRoutes() {
   router.post('/contacts', conditionalAuth, conditionalRole('sender_api'), requireLimit('contacts'), async (req, res) => {
     try {
       const userId = req.auth?.uid || 'default';
-
-      // Check contacts limit
-      if (req.planLimit && req.planLimit !== -1) {
-        try {
-          const contactData = await metricsStore.listContacts(userId, { page: 1, pageSize: 1 });
-          const totalContacts = contactData.total || 0;
-          if (totalContacts >= req.planLimit) {
-            return res.status(403).json({
-              error: 'plan_limit_reached',
-              feature: 'contacts',
-              message: `Límite de contactos alcanzado. Tu plan permite ${req.planLimit} contactos. Actuales: ${totalContacts}.`,
-              limit: req.planLimit,
-              used: totalContacts
-            });
-          }
-        } catch (limitErr) {
-          logger.warn({ err: limitErr.message, userId }, 'Could not check contacts limit, allowing');
-        }
-      }
 
       const { phone, nombre, tratamiento, sustantivo, grupo } = req.body || {};
       const userCountry = req.userProfile?.country || 'PY';
@@ -1235,7 +1182,7 @@ function buildRoutes() {
   });
 
   // ---------------------------
-  // User: Plan features (for frontend feature gating)
+  // User: access capabilities for frontend display
   // ---------------------------
   router.get('/user/plan-features', conditionalAuthNoTrial, async (req, res) => {
     try {
@@ -1244,7 +1191,7 @@ function buildRoutes() {
         return res.status(404).json({ error: 'Profile not found' });
       }
 
-      const plan = profile.plan || 'expired';
+      const plan = 'active';
       const role = profile.role;
       const features = getPlanFeatures(plan, role);
 
@@ -1838,23 +1785,6 @@ function buildRoutes() {
   router.post('/templates', conditionalAuth, conditionalRole('sender_api'), requireLimit('templates'), async (req, res) => {
     try {
       const userId = req.auth?.uid || 'default';
-
-      if (req.planLimit && req.planLimit !== -1) {
-        try {
-          const totalTemplates = await ft.getTemplateCount(userId);
-          if (totalTemplates >= req.planLimit) {
-            return res.status(403).json({
-              error: 'plan_limit_reached',
-              feature: 'templates',
-              message: `Límite de plantillas alcanzado. Tu plan permite ${req.planLimit} plantillas. Actuales: ${totalTemplates}.`,
-              limit: req.planLimit,
-              used: totalTemplates
-            });
-          }
-        } catch (limitErr) {
-          logger.warn({ err: limitErr.message, userId }, 'Could not check templates limit, allowing');
-        }
-      }
 
       const { name, content, category, variables } = req.body || {};
 

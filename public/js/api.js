@@ -43,26 +43,9 @@ function loadApi() {
 function checkApiPlanAccess() {
   var gateEl = document.getElementById('api-plan-gate');
   var contentEl = document.getElementById('api-content');
-  if (!gateEl || !contentEl) return;
 
-  var profile = window.userProfile;
-  if (!profile) {
-    // Profile not loaded yet — show content by default
-    gateEl.classList.add('d-none');
-    contentEl.classList.remove('d-none');
-    return;
-  }
-
-  var hasAccess = profile.role === 'admin' ||
-    (window.planFeatures && window.planFeatures.features && window.planFeatures.features.api === true);
-
-  if (hasAccess) {
-    gateEl.classList.add('d-none');
-    contentEl.classList.remove('d-none');
-  } else {
-    gateEl.classList.remove('d-none');
-    contentEl.classList.add('d-none');
-  }
+  if (gateEl) gateEl.classList.add('d-none');
+  if (contentEl) contentEl.classList.remove('d-none');
 }
 
 function loadApiKey() {

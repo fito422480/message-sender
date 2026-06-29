@@ -55,7 +55,7 @@ async function loadIntervals() {
   } catch (e) {
     // Fallback: render default intervals without server data
     availableIntervals = [
-      { value: 3,  label: 'Rapido (3s)', badge: '\u26A0\uFE0F', color: 'warning', restricted: true, available: false },
+      { value: 3,  label: 'Rapido (3s)', badge: '\u26A0\uFE0F', color: 'warning', restricted: false, available: true },
       { value: 5,  label: 'Normal (5s)', badge: '\u2713', color: 'success', restricted: false, available: true, default: true },
       { value: 8,  label: 'Seguro (8s)', badge: '\u2713\u2713', color: 'info', restricted: false, available: true },
       { value: 12, label: 'Muy seguro (12s)', badge: '\u2713\u2713\u2713', color: 'info', restricted: false, available: true },
@@ -98,7 +98,7 @@ function renderIntervalPills() {
     }
     if (!opt.available && opt.restricted) {
       pill.innerHTML = '<i class="bi bi-lock-fill"></i> ' + labelText;
-      pill.title = 'Disponible en plan Profesional o superior';
+      pill.title = 'No disponible';
     } else {
       pill.innerHTML = labelText;
     }
